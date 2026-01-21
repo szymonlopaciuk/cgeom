@@ -26,6 +26,10 @@ Contract: len(out_points)=len_points
     double emity_norm = beam_data->emity_norm;
     double delta_rms = beam_data->delta_rms;
     double tol_beta_beating = beam_data->tol_beta_beating;
+    double tol_disp_ref_beta = beam_data->tol_disp_ref_beta;
+    double tol_disp = beam_data->tol_disp;
+    double tol_disp_ref_dx = beam_data->tol_disp_ref_dx;
+    double tol_co = beam_data->tol_co;
 
     double tol_r = aperture_data->tol_r;
     double tol_x = aperture_data->tol_x;
@@ -35,12 +39,17 @@ Contract: len(out_points)=len_points
     double hx = beam_data->halo_x;
     double hy = beam_data->halo_y;
 
-
     double ex = emitx_norm / gamma;
     double ey = emity_norm / gamma;
 
     double sigma_x = sqrt(ex * betx + dx * dx * delta_rms * delta_rms) * tol_beta_beating;
     double sigma_y = sqrt(ey * bety + dy * dy * delta_rms * delta_rms) * tol_beta_beating;
+
+    double tol_dx = tol_beta_beating * tol_disp * tol_disp_ref_dx * (betx / tol_disp_ref_beta) * delta_rms;
+    double tol_dy = tol_beta_beating * tol_disp * tol_disp_ref_dx * (betx / tol_disp_ref_beta) * delta_rms;
+
+    double tol_rx = tol_r + tol_co + tol_dx;
+    double tol_ry = tol_r + tol_co + tol_dy;
 
     /*
         We describe the beam of the shape described by hx, hy, and hr as a
@@ -66,8 +75,8 @@ Contract: len(out_points)=len_points
     */
     double h = tol_x + sh * sigma_x;
     double v = tol_y + sv * sigma_y;
-    double a = tol_r + sr * sigma_x;
-    double b = tol_r + sr * sigma_y;
+    double a = tol_rx + sr * sigma_x;
+    double b = tol_ry + sr * sigma_y;
 
     G2DSegment segments[8];
     G2DPath path;

@@ -8,6 +8,7 @@ from xtrack.progress_indicator import progress
 
 from . import clib
 from .path import Path2D
+from .aperture import transform_matrix
 
 
 LimitTypes = Union[
@@ -17,36 +18,6 @@ LimitTypes = Union[
     apertures.LimitRacetrack,
     apertures.LimitPolygon,
 ]
-
-
-def transform_matrix(dx, dy, ds, theta, phi, psi):
-    """Generate a 3D transformation matrix.
-
-    Parameters
-    ----------
-    dx, dy, ds : float
-        Shifts in x, y, and s directions
-    theta : float
-        Rotation around the y-axis (positive s to x) in radians
-    phi
-        Rotation around the x-axis (positive s to y) in radians
-    psi
-        Rotation around the s-axis (positive y to x) in radians
-    """
-    s_phi, c_phi = np.sin(phi), np.cos(phi)
-    s_theta, c_theta = np.sin(theta), np.cos(theta)
-    s_psi, c_psi = np.sin(psi), np.cos(psi)
-    matrix = np.array(
-        [
-            [-s_phi * s_psi * s_theta + c_psi * c_theta,
-                -c_psi * s_phi * s_theta - c_theta * s_psi, c_phi * s_theta, dx],
-            [c_phi * s_psi, c_phi * c_psi, s_phi, dy],
-            [-c_theta * s_phi * s_psi - c_psi * s_theta,
-                -c_psi * c_theta * s_phi + s_psi * s_theta, c_phi * c_theta, ds],
-            [0, 0, 0, 1],
-        ]
-    )
-    return matrix
 
 
 class Aperture:

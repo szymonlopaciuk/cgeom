@@ -118,11 +118,11 @@ for row in ap.rows:
     beam_data = clib.G2DBeamData(
         emitx_norm=ap.exn,
         emity_norm=ap.eyn,
-        delta_rms=0,
+        delta_rms=ap.twiss_deltap,
         tol_co=ap.co_radius,
-        tol_disp=0,
-        tol_disp_ref_dx=0,
-        tol_disp_ref_beta=0,
+        tol_disp=ap.paras_dx,
+        tol_disp_ref_dx=ap.betaqfx,
+        tol_disp_ref_beta=ap.dqf,
         tol_energy=0,
         tol_beta_beating=ap.beta_beating,
         halo_x=n1, #ap.halo_h,
@@ -149,7 +149,7 @@ for row in ap.rows:
         tol_r=row.rtol,
     )
     halo_pts = clib.geom2d_get_beam_envelope(beam_data, twiss_data, aper_data, len_points=30)
-    ax.plot(row.x + halo_pts['x'], row.y + halo_pts['y'], color='pink', label=fr'beam with halo = (x = n1$\sigma$, y = n1$\sigma$, r = n1$\sigma$)) [cgeom]')
+    ax.plot(halo_pts['x'], halo_pts['y'], color='pink', label=fr'beam with halo = (x = n1$\sigma$, y = n1$\sigma$, r = n1$\sigma$)) [cgeom]')
     # Plot pos tol
     d_arc = ap.dqf * ap.paras_dx
     dx = ap.beta_beating * d_arc * np.sqrt(row.betx / ap.betaqfx) * ap.twiss_deltap

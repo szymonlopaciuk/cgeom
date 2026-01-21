@@ -20,12 +20,12 @@ typedef struct {
     double emitx_norm;        // normalized emittance x
     double emity_norm;        // normalized emittance y
     double delta_rms;         // rms energy spread
-    double tol_co;            // tolerance for closed orbit
-    double tol_disp;          // tolerance for normalized dispersion
-    double tol_disp_ref_dx;   // tolerance for reference dispersion derivative
-    double tol_disp_ref_beta; // tolerance for reference dispersion beta
-    double tol_energy;        // tolerance for energy error
-    double tol_beta_beating;  // tolerance for beta beating in sigma
+    double tol_co;            // tolerance for closed orbit [co_radius]
+    double tol_disp;          // tolerance for normalized dispersion [dqf]
+    double tol_disp_ref_dx;   // tolerance for reference dispersion derivative [paras_dx]
+    double tol_disp_ref_beta; // tolerance for reference dispersion beta [betaqfx]
+    double tol_energy;        // tolerance for energy error [twiss_deltap]
+    double tol_beta_beating;  // tolerance for beta beating in sigma [beta_beating]
     double halo_x;            // n sigma of horizontal halo
     double halo_y;            // n sigma of vertical halo
     double halo_r;            // n sigma of 45 degree halo
