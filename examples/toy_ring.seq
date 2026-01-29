@@ -1,0 +1,24 @@
+! Toy Ring, 4 arcs
+
+l_arc = 3;  ! length of the arc
+l_quad = 0.3;  ! length of the quads
+l_drift = 1;  ! length of the straight section drifts
+
+qf = 0.1;  ! qf strength
+qd = -0.7;  ! qd strength
+angle_arc = pi / 2;  ! arcs 90°
+
+mb: sbend, angle = angle_arc, l = l_arc, apertype=circle, aperture={0.1}, aper_offset={0.003, 0};
+mqf: quadrupole, k1 = qf, l = l_quad, apertype=rectangle, aperture={0.08, 0.04};
+mqd: quadrupole, k1 = qd, l = l_quad, apertype=ellipse, aperture={0.04, 0.08};
+ds: drift, l = l_drift;
+ap_ds: marker, aperture={0.022, 0.01715, 0.022, 0.022}, aper_tol={9e-4, 8e-4, 5e-4};
+dsa: line = (ap_ds, ds, ap_ds);
+
+ss_f: line = (dsa, mqf, dsa);
+ss_d: line = (dsa, mqd, dsa);
+
+ring: line = (ss_f, mb, ss_d, mb, ss_f, mb, ss_d, mb);
+
+beam, particle=proton, pc=1.2e9;
+use, period=ring;

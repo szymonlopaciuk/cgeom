@@ -1,8 +1,8 @@
-import inspect
-from typing import Dict, Union, Type, Callable, Tuple, List, Optional
+import bisect
+from functools import singledispatchmethod, lru_cache
+from typing import Dict, Union, Tuple, List, Optional, Iterator
 
 import numpy as np
-from hatch.cli import self
 
 import xobjects as xo
 from xtrack.beam_elements import apertures
@@ -76,14 +76,21 @@ class Profiles:
 
     Parameters
     ----------
-    names: dict
+    indices: dict
         Dictionary mapping names of profiles to indices in ``profiles``.
     profiles: ProfileList
         List of profiles.
     """
-    def __init__(self, names: Dict[str, int], profiles: ProfileList):
-        self.names = names  # dict of profile names to indices
-        self.profiles = profiles  # list of profile objects
+    def __init__(self, indices: Dict[str, int], profiles: ProfileList):
+        self.indices = indices  # dict of profile names to indices
+        self.profile_list = profiles  # list of profile objects
+
+    def __getitem__(self, name: str) -> ProfileTypes:
+        try:
+            index = self.indices[name]
+            return self.profile_list.profiles[index]
+        except KeyError:
+            raise KeyError(f"Profile {name} not found.")
 
 
 class ProfilePosition(xo.Struct):
@@ -142,7 +149,13 @@ class ApertureType(xo.Struct):
 
 
 class ApertureTypeList(xo.Struct):
-    aperture_types = ApertureType[:]
+    types = ApertureType[:]
+
+    def __getitem__(self, idx: int) -> ApertureType:
+        return self.types[idx]
+
+    def __len__(self) -> int:
+        return len(self.types)
 
 
 class ApertureTypes:
@@ -155,8 +168,8 @@ class ApertureTypes:
     types: ApertureTypeList
         List of pipes in the lab frame.
     """
-    def __init__(self, types: ApertureTypeList):
-        self.names: Dict[str, int] = {}
+    def __init__(self, indices: Dict[str, int], types: ApertureTypeList):
+        self.indices = indices
         self.types = types
 
 
@@ -170,12 +183,12 @@ class TypePosition(xo.Struct):
 
 
 class TypePositionList(xo.Struct):
-    type_positions = TypePosition[:]
+    positions = TypePosition[:]
 
 
 class ApertureModel:
-    def __init__(self, names, line_name, type_positions):
-        self.names = names  # dict of aperture model names to indices
+    def __init__(self, indices: Dict[str, int], line_name: str, type_positions: TypePositionList):
+        self.indices = indices  # dict of aperture model names to indices
         self.line_name = line_name
         self.type_positions = type_positions  # positioning of types in line frame
 
@@ -230,9 +243,9 @@ class Aperture:
     def __init__(
         self,
         env,
-        profiles,
-        aperture_types,
-        aperture_model,
+        profiles: Profiles,
+        aperture_types: ApertureTypes,
+        aperture_model: ApertureModel,
         cross_sections,
         halo_params=None,
     ):
@@ -246,7 +259,7 @@ class Aperture:
             self.halo_params.update(halo_params)
 
     @classmethod
-    def from_line_with_aperture(cls, line):
+    def from_line_with_aperture(cls, line, line_name=None):
         survey = line.survey()
         name_to_sv_index = dict(zip(survey.name, range(len(survey))))
         layout_data = line.metadata['layout_data']
@@ -260,6 +273,7 @@ class Aperture:
         )
 
         for name in name_iter_with_progress:
+            # Discard line name suffix to get the aperture name
             aper_name = name.rsplit("/", 1)[0] if "/" in name else name
             if aper_name in layout_data:
                 element_for_aperture[aper_name] = name
@@ -271,26 +285,32 @@ class Aperture:
         )
 
         profiles = []
-        types = []
-        type_positions = []
+        type_list = []
+        type_positions_list = []
         aper_names = {}
 
-        for idx, (aper_name, element_name) in enumerate(aper_iter_with_progress):
+        aper_idx = 0
+
+        for aper_name, element_name in aper_iter_with_progress:
             element_metadata = layout_data[aper_name]
 
+            if 'aperture' not in element_metadata:
+                continue
+
             shape, params, tols = element_metadata['aperture']
-            profile = cls.profile_from_madx_aperture(shape, params)
+            profile = cls._profile_from_madx_aperture(shape, params)
 
             if not profile:
+                # There is not really an aperture here, continue
                 continue
 
             element = line.element_dict[element_name]
-            aper_names[aper_name] = idx
+            aper_names[aper_name] = aper_idx
 
             profile_union = ProfileUnion(profile)
             profiles.append(profile_union)
 
-            profile_position = ProfilePosition(profile_index=idx)
+            profile_position = ProfilePosition(profile_index=aper_idx)
             offset_x, offset_y = element_metadata.get('offset', (0.0, 0.0))
             profile_position.shift_x = offset_x
             profile_position.shift_y = offset_y
@@ -300,7 +320,7 @@ class Aperture:
                 # Place two profiles on either side of the element
                 profile_position_start = profile_position
                 profile_position_end = profile_position.copy()
-                profile_position_start.s_position = -element.length / 2
+                profile_position_start.s_position = 0
                 profile_position_end.s_position = element.length / 2
                 positions = [profile_position_start, profile_position_end]
                 curvature = getattr(element, 'h', 0)
@@ -310,7 +330,7 @@ class Aperture:
                 curvature = 0
 
             aperture_type = ApertureType(curvature=curvature, positions=positions)
-            types.append(aperture_type)
+            type_list.append(aperture_type)
 
             # Apply element transformations to type
             if element.transformations_active:
@@ -326,20 +346,29 @@ class Aperture:
                 matrix = np.identity(4)
 
             type_position = TypePosition(
-                type_index=idx,
+                type_index=aper_idx,
                 ref_position=element_name,
                 idx_position=name_to_sv_index[element_name],
                 transformation=matrix,
             )
-            type_positions.append(type_position)
+            type_positions_list.append(type_position)
+
+            aper_idx += 1
 
         profile_list = ProfileList(profiles=profiles)
-        profiles = Profiles(names=aper_names, profiles=profile_list)
+        profiles = Profiles(indices=aper_names, profiles=profile_list)
+
+        type_positions = TypePositionList(positions=type_positions_list)
 
         model = ApertureModel(
-            names=aper_names,
-            line_name=line.name,
+            indices=aper_names,
+            line_name=line_name or line.name,
             type_positions=type_positions,
+        )
+
+        types = ApertureTypes(
+            indices=aper_names,
+            types=ApertureTypeList(types=type_list),
         )
 
         aperture = cls(
@@ -353,27 +382,29 @@ class Aperture:
         return aperture
 
     @classmethod
-    def from_line_with_limit(cls, line):
+    def from_line_with_limit(cls, line, line_name=None):
         survey = line.survey()
         name_to_sv_index = dict(zip(survey.name, range(len(survey))))
         element_names = line.element_names
 
         profiles = []
-        types = []
-        names = {}
-        type_positions = []
+        type_list = []
+        indices = {}
+        type_positions_list = []
 
-        for idx, name in progress(enumerate(element_names), desc="Building aperture data", total=len(element_names)):
+        aper_idx = 0
+
+        for name in progress(element_names, desc="Building aperture data", total=len(element_names)):
             element = line.element_dict[name]
             if not isinstance(element, LimitTypes):
                 continue
 
-            names[name] = idx
-            profile, center_x, center_y = cls.profile_from_limit_element(element)
+            indices[name] = aper_idx
+            profile, center_x, center_y = cls._profile_from_limit_element(element)
             profile_union = ProfileUnion(profile)
             profiles.append(profile_union)
 
-            profile_position = ProfilePosition(profile_index=idx)
+            profile_position = ProfilePosition(profile_index=aper_idx)
             if element.transformations_active:
                 profile_position.s_position = element.shift_s
                 profile_position.shift_x = element.shift_x
@@ -384,23 +415,32 @@ class Aperture:
                 profile_position.rot_z = element.rot_y_rad
 
             aperture_type = ApertureType(curvature=0, positions=[profile_position])
-            types.append(aperture_type)
+            type_list.append(aperture_type)
 
             type_position = TypePosition(
-                type_index=idx,
+                type_index=aper_idx,
                 ref_position=name,
                 idx_position=name_to_sv_index[name],
                 transformation=np.identity(4),
             )
-            type_positions.append(type_position)
+            type_positions_list.append(type_position)
+
+            aper_idx += 1
 
         profile_list = ProfileList(profiles=profiles)
-        profiles = Profiles(names=names, profiles=profile_list)
+        profiles = Profiles(indices=indices, profiles=profile_list)
+
+        type_positions = TypePositionList(positions=type_positions_list)
 
         model = ApertureModel(
-            names=names,
-            line_name=line.name,
+            indices=indices,
+            line_name=line_name or line.name,
             type_positions=type_positions,
+        )
+
+        types = ApertureTypes(
+            indices=indices,
+            types=ApertureTypeList(types=type_list),
         )
 
         aperture = cls(
@@ -413,11 +453,61 @@ class Aperture:
 
         return aperture
 
+    def get_aperture_margin_mm(self, line_name: str, element_name: str) -> np.ndarray:
+        line = self.env[line_name]
+        element = line[element_name]
+        s_start = line.get_s_position(element_name)
+        s_end = s_start + getattr(element, 'length', 0)
 
-    @classmethod
-    def profile_from_limit_element(cls, element: LimitTypes) -> Tuple[ProfileTypes, float, float]:
+        apertures = self._find_profiles(s_start, s_end, line_name)
+
+        import ipdb; ipdb.set_trace()
+
+    def _find_profiles(self, s_start: float, s_end: float, line_name: str) -> List[Tuple[TypePosition, ProfilePosition]]:
+        sorted_profiles = self._sorted_profiles(line_name)
+
+        idx_start = bisect.bisect_left(sorted_profiles, s_start, key=lambda p: p[0])
+        idx_end = bisect.bisect_right(sorted_profiles, s_end, lo=idx_start, key=lambda p: p[1])
+
+        profiles = [(type_pos, profile_pos) for (_, type_pos, profile_pos) in sorted_profiles[idx_start:idx_end]]
+        return profiles
+
+    @lru_cache
+    def _sorted_profiles(self, line_name: str) -> List[Tuple[float, TypePosition, ProfilePosition]]:
+        """Make a list of sorted profile positions based on their absolute positions in the line.
+
+        Parameters
+        ----------
+        line_name: str
+            Name of the line for which to make the sorted profile list.
+
+        Returns
+        -------
+        A list of tuples ``(s_position, aperture_type, profile_position)``, where each entry corresponds to a unique
+        occurrence of a profile position along the line ``line_name``, sorted by ``s_position``.
         """
-        Get 2d points from limit element
+        survey = self.env[line_name].survey()
+        profiles = []
+
+        for type_pos in self.aperture_model.type_positions.positions:
+            aperture_type = self.aperture_types.types[type_pos.type_index]
+            sv_point = survey.rows[type_pos.idx_position]
+
+            for profile_pos in aperture_type.positions:
+                # TODO: I think we need to take into account the transformations in this calculation...
+                s_position = sv_point.s[0] + sv_point.length[0] / 2 + profile_pos.s_position
+
+                profiles.append((s_position, type_pos, profile_pos))
+
+        profiles = sorted(profiles, key=lambda p: p[0])
+        import ipdb; ipdb.set_trace()
+        return profiles
+
+    @singledispatchmethod
+    @staticmethod
+    def _profile_from_limit_element(element: LimitTypes) -> Tuple[ProfileTypes, float, float]:
+        """
+        Convert a limit beam element to a profile object.
 
         Parameters
         ----------
@@ -426,11 +516,11 @@ class Aperture:
         Returns: ProfileTypes
             A profile.
         """
-        profile, centre_x, centre_y = cls.FROM_LIMIT_CONVERTERS[type(element)](element)
-        return profile, centre_x, centre_y
+        raise NotImplementedError(f"Unsupported element type: {type(element)}")
 
+    @_profile_from_limit_element.register
     @staticmethod
-    def profile_from_limit_rect(element: apertures.LimitRect) -> Tuple[ProfileTypes, float, float]:
+    def _profile_from_limit_rect(element: apertures.LimitRect) -> Tuple[ProfileTypes, float, float]:
         half_width = (element.max_x - element.min_x) / 2
         half_height = (element.max_y - element.min_y) / 2
         x = (element.min_x + element.max_x) / 2
@@ -438,15 +528,17 @@ class Aperture:
         rectangle = Rectangle(half_width=half_width, half_height=half_height)
         return rectangle, x, y
 
+    @_profile_from_limit_element.register
     @staticmethod
-    def profile_from_limit_ellipse(element: apertures.LimitEllipse) -> Tuple[ProfileTypes, float, float]:
+    def _profile_from_limit_ellipse(element: apertures.LimitEllipse) -> Tuple[ProfileTypes, float, float]:
         rx = element.a
         ry = element.b
         ellipse = Ellipse(half_major=rx, half_minor=ry)
         return ellipse, 0, 0
 
+    @_profile_from_limit_element.register
     @staticmethod
-    def profile_from_limit_rect_ellipse(element: apertures.LimitRectEllipse) -> Tuple[ProfileTypes, float, float]:
+    def _profile_from_limit_rect_ellipse(element: apertures.LimitRectEllipse) -> Tuple[ProfileTypes, float, float]:
         max_x = element.max_x
         max_y = element.max_y
         rx = element.a
@@ -454,8 +546,9 @@ class Aperture:
         rect_ellipse = RectEllipse(max_x=max_x, max_y=max_y, half_major=rx, half_minor=ry)
         return rect_ellipse, 0, 0
 
+    @_profile_from_limit_element.register
     @staticmethod
-    def profile_from_limit_racetrack(element: apertures.LimitRacetrack) -> Tuple[ProfileTypes, float, float]:
+    def _profile_from_limit_racetrack(element: apertures.LimitRacetrack) -> Tuple[ProfileTypes, float, float]:
         half_width = (element.max_x - element.min_x) / 2
         half_height = (element.max_y - element.min_y) / 2
         x = (element.min_x + element.max_x) / 2
@@ -470,24 +563,24 @@ class Aperture:
         )
         return racetrack, x, y
 
+    @_profile_from_limit_element.register
     @staticmethod
-    def profile_from_limit_polygon(element: apertures.LimitPolygon) -> Tuple[ProfileTypes, float, float]:
+    def _profile_from_limit_polygon(element: apertures.LimitPolygon) -> Tuple[ProfileTypes, float, float]:
         xs = element.x_vertices + [element.x_vertices[0]]
         ys = element.y_vertices + [element.y_vertices[0]]
         polygon = Polygon(vertices=np.column_stack([xs, ys]))
         return polygon, 0, 0
 
-    FROM_LIMIT_CONVERTERS: Dict[Type[LimitTypes], Callable[[LimitTypes], Tuple[ProfileTypes, float, float]]] = {
-        apertures.LimitRect: profile_from_limit_rect,
-        apertures.LimitEllipse: profile_from_limit_ellipse,
-        apertures.LimitRectEllipse: profile_from_limit_rect_ellipse,
-        apertures.LimitRacetrack: profile_from_limit_racetrack,
-        apertures.LimitPolygon: profile_from_limit_polygon,
-    }
-
     @classmethod
-    def profile_from_madx_aperture(cls, shape: str, params: List[float]) -> Optional[ProfileTypes]:
-        converter, allowed_len_params = cls.FROM_MADX_CONVERTERS[shape]
+    def _profile_from_madx_aperture(cls, shape: str, params: List[float]) -> Optional[ProfileTypes]:
+        converter, allowed_len_params = {
+            'circle': (cls._profile_from_madx_circle, 1),
+            'rectangle': (cls._profile_from_madx_rectangle, 2),
+            'ellipse': (cls._profile_from_madx_ellipse, 2),
+            'rectellipse': (cls._profile_from_madx_rectellipse, 4),
+            'racetrack': (cls._profile_from_madx_racetrack, 4),
+            'octagon': (cls._profile_from_madx_octagon, 4),
+        }[shape]
 
         # Clean up params due to MAD-X quirks
         params = params[:allowed_len_params]
@@ -506,19 +599,19 @@ class Aperture:
         return converter(*params)
 
     @staticmethod
-    def profile_from_madx_circle(radius) -> Circle:
+    def _profile_from_madx_circle(radius) -> Circle:
         return Circle(radius=radius)
 
     @staticmethod
-    def profile_from_madx_rectangle(half_width, half_height) -> Rectangle:
+    def _profile_from_madx_rectangle(half_width, half_height) -> Rectangle:
         return Rectangle(half_width=half_width, half_height=half_height)
 
     @staticmethod
-    def profile_from_madx_ellipse(half_major, half_minor) -> Ellipse:
+    def _profile_from_madx_ellipse(half_major, half_minor) -> Ellipse:
         return Ellipse(half_major=half_major, half_minor=half_minor)
 
     @staticmethod
-    def profile_from_madx_rectellipse(max_x, max_y, half_major, half_minor) -> RectEllipse:
+    def _profile_from_madx_rectellipse(max_x, max_y, half_major, half_minor) -> RectEllipse:
         return RectEllipse(
             max_x=max_x,
             max_y=max_y,
@@ -527,7 +620,7 @@ class Aperture:
         )
 
     @staticmethod
-    def profile_from_madx_racetrack(half_width, half_height, half_major, half_minor) -> Racetrack:
+    def _profile_from_madx_racetrack(half_width, half_height, half_major, half_minor) -> Racetrack:
         return Racetrack(
             half_width=half_width,
             half_height=half_height,
@@ -536,20 +629,8 @@ class Aperture:
         )
 
     @staticmethod
-    def profile_from_madx_octagon(half_width, half_height, angle_0, angle_1) -> Octagon:
+    def _profile_from_madx_octagon(half_width, half_height, angle_0, angle_1) -> Octagon:
         # TODO: Handle inconsistencies coming from angle_1
         x = 0.5 * half_width * (np.tan(angle_0) + 1)
         diag = np.sqrt(2) * x
         return Octagon(half_width=half_width, half_height=half_height, half_diagonal=diag)
-
-    FROM_MADX_CONVERTERS: Dict[str, Tuple[Callable[..., ProfileTypes], int]] = {
-        'circle': (profile_from_madx_circle, 1),
-        'rectangle': (profile_from_madx_rectangle, 2),
-        'ellipse': (profile_from_madx_ellipse, 2),
-        'rectellipse': (profile_from_madx_rectellipse, 4),
-        'racetrack': (profile_from_madx_racetrack, 4),
-        'octagon': (profile_from_madx_octagon, 4),
-    }
-
-    def get_aperture_margin_mm(self, line: str, element: str) -> np.ndarray:
-        pass

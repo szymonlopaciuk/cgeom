@@ -1,0 +1,38 @@
+! Toy Ring, 4 arcs
+
+l_arc = 3;  ! length of the arc
+l_quad = 0.3;  ! length of the quads
+l_drift = 1;  ! length of the straight section drifts
+
+l_chicane_bend = 0.1;  ! length of the chicane arcs
+l_chicane_gap = 0.1;  ! length of the small chicane drifts
+
+qf = 0.1;  ! qf strength
+qd = -0.7;  ! qd strength
+angle_arc = pi / 2;  ! arcs 90°
+angle_m = pi / 10;  ! chicane bending
+
+l_chicane_bend_proj = l_chicane_bend * sin(angle_m) / angle_m;  ! length of mb_m1 as projected on Z
+l_chicane_gap_proj = l_chicane_gap * cos(angle_m);  ! length of ds_ms as projected on Z
+l_chicane_drift = (l_drift - 2 * l_chicane_bend_proj - l_chicane_gap_proj) / 2;
+
+mb: sbend, angle = angle_arc, l = l_arc;
+mqf: quadrupole, k1 = qf, l = l_quad;
+mqf_half: quadrupole, k1 = qf / 2, l = l_quad / 2;
+mqd: quadrupole, k1 = qd, l = l_quad;
+ds: drift, l = l_drift;
+chicane_mid: marker;
+
+mb_ch1: sbend, angle = angle_m, l = l_chicane_bend;
+mb_ch2: sbend, angle = -angle_m, l = l_chicane_bend;
+ds_ms: drift, l = l_chicane_gap;
+ds_ml: drift, l = l_chicane_drift;
+
+ss_f: line = (ds, mqf, ds);
+ss_d: line = (ds, mqd, ds);
+
+ch_l: line = (ds_ml, mb_ch1, ds_ms, mb_ch2, ds_ml);
+ch_r: line = (ds_ml, mb_ch2, ds_ms, mb_ch1, ds_ml);
+ss_f_ch: line = (ch_l, mqf_half, chicane_mid, mqf_half, ch_r);
+
+ring: line = (ss_f, mb, ss_d, mb, ss_f_ch, mb, ss_d, mb);
