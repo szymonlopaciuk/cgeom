@@ -2,7 +2,8 @@ import xtrack as xt
 import xobjects as xo
 from cpymad.madx import Madx
 
-from cgeom.aperture import Aperture, Ellipse, Rectangle, RectEllipse
+from cgeom.aperture import Aperture
+from cgeom.structures import Ellipse, Rectangle, RectEllipse
 from itertools import zip_longest
 
 
@@ -132,7 +133,7 @@ def test_aperture_find_type_positions_perfect_overlap():
     aperture_model = Aperture.from_line_with_associated_apertures(ring, line_name='ring')
 
     mqf0, = aperture_model._find_type_positions(1, 1.3, 'ring')
-    assert mqf0.ref_position == 'mqf::0'
+    assert mqf0.survey_reference_name == 'mqf::0'
 
     mqf0_name = aperture_model.type_name_for_position(mqf0)
     assert mqf0_name == 'mqf_aper'
@@ -162,7 +163,7 @@ def test_aperture_find_type_positions_partially_spanning_multiple_types():
     mb1, ap_ds8, ap_ds9, mqf1 = overlapping
 
     # Check the bend
-    assert mb1.ref_position == 'mb::1'
+    assert mb1.survey_reference_name == 'mb::1'
 
     mb1_name = aperture_model.type_name_for_position(mb1)
     assert mb1_name == 'mb_aper'
@@ -219,5 +220,5 @@ def test_aperture_find_type_positions_partially_spanning_multiple_types():
     assert isinstance(ap_ds8_profile_start, RectEllipse)
     assert ap_ds8_profile_start.half_major == 0.022
     assert ap_ds8_profile_start.half_minor == 0.022
-    assert ap_ds8_profile_start.max_x == 0.022
-    assert ap_ds8_profile_start.max_y == 0.01715
+    assert ap_ds8_profile_start.half_width == 0.022
+    assert ap_ds8_profile_start.half_height == 0.01715
