@@ -1,9 +1,12 @@
 import xobjects as xo
-from cgeom.structures import ApertureModel, CrossSections
+from cgeom.structures import ApertureModel, BeamData, CrossSections, Profile, TwissData
 
 
 def build_aperture_kernels(context):
-    source = '#include "cgeom/headers/polygons.h"'
+    source = '''
+        #include "cgeom/headers/polygons.h"
+        #include "cgeom/headers/beam_aperture.h"
+    '''
 
     kernels = {
         "build_profile_polygons": xo.Kernel(
@@ -12,6 +15,46 @@ def build_aperture_kernels(context):
                 xo.Arg(ApertureModel, name="model"),
                 xo.Arg(CrossSections, name="cross_sections"),
             ],
+        ),
+        "compute_max_aperture_sigma": xo.Kernel(
+            c_name="compute_max_aperture_sigma",
+            args=[
+                xo.Arg(ApertureModel, name="model"),
+                xo.Arg(CrossSections, name="cross_sections"),
+                xo.Arg(TwissData, name="twiss_data"),
+                xo.Arg(BeamData, name="beam_data"),
+                xo.Arg(xo.Float32, pointer=True, name="out_interpolated_apertures"),
+                xo.Arg(xo.UInt32, name="envelope_num_points"),
+                xo.Arg(xo.Float32, pointer=True, name="out_envelope_at_max_sigma"),
+                xo.Arg(xo.Float32, pointer=True, name="sigmas"),
+            ],
+        ),
+        "build_polygon_for_profile": xo.Kernel(
+            c_name="build_polygon_for_profile",
+            args=[
+                xo.Arg(CrossSections, name="cross_sections"),
+                xo.Arg(xo.UInt64, name="cross_section_idx"),
+                xo.Arg(Profile, name="profile"),
+            ],
+        ),
+        "_points_inside_polygon": xo.Kernel(
+            c_name="_points_inside_polygon",
+            args=[
+                xo.Arg(xo.Float32, pointer=True, name="points"),
+                xo.Arg(xo.Float32, pointer=True, name="poly_points"),
+                xo.Arg(xo.UInt32, name="len_points"),
+                xo.Arg(xo.UInt32, name="len_poly_points"),
+            ],
+            ret=xo.Arg(xo.Int8),
+        ),
+        "_is_point_inside_polygon": xo.Kernel(
+            c_name="_is_point_inside_polygon",
+            args=[
+                xo.Arg(xo.Float32, pointer=True, name="point"),
+                xo.Arg(xo.Float32, pointer=True, name="points"),
+                xo.Arg(xo.UInt32, name="len_points"),
+            ],
+            ret=xo.Arg(xo.Int8),
         ),
     }
 

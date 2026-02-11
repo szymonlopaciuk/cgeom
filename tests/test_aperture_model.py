@@ -1,11 +1,16 @@
+import numpy as np
+import pytest
+
 import xtrack as xt
 import xobjects as xo
 from cpymad.madx import Madx
 
 from cgeom.aperture import Aperture
 from cgeom.structures import Ellipse, Rectangle, RectEllipse
+from cgeom.kernels import build_aperture_kernels
 from itertools import zip_longest
 
+from xtrack.twiss import TwissInit
 
 TOY_RING_SEQUENCE = """
     ! Toy Ring, 4 arcs
@@ -33,6 +38,17 @@ TOY_RING_SEQUENCE = """
     beam, particle=proton, pc=1.2e9;
     use, period=ring;
 """
+
+
+@pytest.fixture(scope='module')
+def context():
+    return xo.ContextCpu()
+
+
+@pytest.fixture(scope="module")
+def kernels(context):
+    build_aperture_kernels(context)
+    return context.kernels
 
 
 def test_aperture_from_line_with_aperture_type_bounds():
@@ -148,9 +164,9 @@ def test_aperture_find_type_positions_perfect_overlap():
     assert mqf0_prof_pos0.shift_x == mqf0_prof_pos0.shift_y == mqf0_prof_pos1.shift_x == mqf0_prof_pos1.shift_y == 0.
 
     mqf0_profile_start, mqf0_profile_end = [aperture_model.profile_for_position(pos) for pos in mqf0_type.positions]
-    assert isinstance(mqf0_profile_start, Rectangle)
-    assert mqf0_profile_start.half_width == mqf0_profile_end.half_width == 0.08
-    assert mqf0_profile_start.half_height == mqf0_profile_end.half_height == 0.04
+    assert isinstance(mqf0_profile_start.shape, Rectangle)
+    assert mqf0_profile_start.shape.half_width == mqf0_profile_end.shape.half_width == 0.08
+    assert mqf0_profile_start.shape.half_height == mqf0_profile_end.shape.half_height == 0.04
 
 def test_aperture_find_type_positions_partially_spanning_multiple_types():
     env = xt.load(string=TOY_RING_SEQUENCE, format='madx', install_limits=False)
@@ -179,9 +195,9 @@ def test_aperture_find_type_positions_partially_spanning_multiple_types():
     assert mb1_prof_pos0.shift_x == mb1_prof_pos0.shift_y == mb1_prof_pos1.shift_x == mb1_prof_pos1.shift_y == 0.
 
     mb1_profile_start, mb1_profile_end = [aperture_model.profile_for_position(pos) for pos in mb1_type.positions]
-    assert isinstance(mb1_profile_start, Ellipse)
-    assert mb1_profile_start.half_major == mb1_profile_end.half_major == 0.1
-    assert mb1_profile_start.half_minor == mb1_profile_end.half_minor == 0.1
+    assert isinstance(mb1_profile_start.shape, Ellipse)
+    assert mb1_profile_start.shape.half_major == mb1_profile_end.shape.half_major == 0.1
+    assert mb1_profile_start.shape.half_minor == mb1_profile_end.shape.half_minor == 0.1
 
     # Check the mqf
     mqf1_name = aperture_model.type_name_for_position(mqf1)
@@ -197,9 +213,9 @@ def test_aperture_find_type_positions_partially_spanning_multiple_types():
     assert mqf1_prof_pos0.shift_x == mqf1_prof_pos0.shift_y == mqf1_prof_pos1.shift_x == mqf1_prof_pos1.shift_y == 0.
 
     mqf1_profile_start, mqf1_profile_end = [aperture_model.profile_for_position(pos) for pos in mqf1_type.positions]
-    assert isinstance(mqf1_profile_start, Rectangle)
-    assert mqf1_profile_start.half_width == mqf1_profile_end.half_width == 0.08
-    assert mqf1_profile_start.half_height == mqf1_profile_end.half_height == 0.04
+    assert isinstance(mqf1_profile_start.shape, Rectangle)
+    assert mqf1_profile_start.shape.half_width == mqf1_profile_end.shape.half_width == 0.08
+    assert mqf1_profile_start.shape.half_height == mqf1_profile_end.shape.half_height == 0.04
 
     # Check the ap_ds
     ap_ds8_name = aperture_model.type_name_for_position(ap_ds8)
@@ -217,8 +233,467 @@ def test_aperture_find_type_positions_partially_spanning_multiple_types():
     assert ap_ds8_prof_pos0.shift_x == ap_ds8_prof_pos0.shift_y
 
     ap_ds8_profile_start = aperture_model.profile_for_position(ap_ds8_prof_pos0)
-    assert isinstance(ap_ds8_profile_start, RectEllipse)
-    assert ap_ds8_profile_start.half_major == 0.022
-    assert ap_ds8_profile_start.half_minor == 0.022
-    assert ap_ds8_profile_start.half_width == 0.022
-    assert ap_ds8_profile_start.half_height == 0.01715
+    assert isinstance(ap_ds8_profile_start.shape, RectEllipse)
+    assert ap_ds8_profile_start.shape.half_major == 0.022
+    assert ap_ds8_profile_start.shape.half_minor == 0.022
+    assert ap_ds8_profile_start.shape.half_width == 0.022
+    assert ap_ds8_profile_start.shape.half_height == 0.01715
+
+
+def test_is_point_inside_polygon_ellipse(kernels):
+    rx = 2
+    ry = 3
+    ellipse = [(rx * np.cos(angle), ry * np.sin(angle)) for angle in np.linspace(0, 2 * np.pi, 99)]
+    ellipse.append(ellipse[0])
+    ellipse = np.array(ellipse, dtype=np.float32)
+
+    @np.vectorize
+    def in_ellipse(x, y):
+        point = np.array([x, y], dtype=np.float32)
+        return bool(kernels['_is_point_inside_polygon'](point=point, points=ellipse, len_points=ellipse.shape[0]))
+
+    extent = np.linspace(-10, 10, 100)
+    xs, ys = np.meshgrid(extent, extent)
+
+    result = in_ellipse(xs, ys)
+    expected = (xs ** 2 / rx ** 2 + ys ** 2 / ry ** 2 - 1) < 0
+
+    assert not np.all(result) and np.any(result)  # sanity check
+    assert np.all(result == expected)
+
+
+def test_is_point_inside_polygon_path(kernels):
+    # Define a shape that is a rectangle spanning (-1, -1) through (3, 2) minus
+    # a rectangle (1, 0.5) through (2, 2)
+
+    poly = np.array([
+        (1, 2),
+        (1, .5),
+        (2, .5),
+        (2, 2),
+        (3, 2),
+        (3, -1),
+        (-1, -1),
+        (-1, 2),
+        (1, 2),
+    ], dtype=np.float32)
+
+    @np.vectorize
+    def in_poly(x, y):
+        point = np.array([x, y], dtype=np.float32)
+        return bool(kernels['_is_point_inside_polygon'](point=point, points=poly, len_points=poly.shape[0]))
+
+    extent = np.linspace(-5, 5, 100)
+    xs, ys = np.meshgrid(extent, extent)
+
+    result = in_poly(xs, ys)
+
+    in_rec1 = (-1 < xs) & (xs < 3) & (-1 < ys) & (ys < 2)
+    in_rec2 = (1 < xs) & (xs < 2) & (0.5 < ys) & (ys < 2)
+    expected = in_rec1 & ~in_rec2
+
+    assert not np.all(result) and np.any(result)  # sanity check
+    assert np.all(result == expected)
+
+
+
+def test_points_inside_polygon_inscribed_circles(kernels):
+    r1 = 0.11
+    r2 = 1
+
+    circ1 = [(r1 * np.cos(angle), r1 * np.sin(angle)) for angle in np.linspace(0, 2 * np.pi, 99)]
+    circ1.append(circ1[0])
+    circ2 = [(r2 * np.cos(angle), r2 * np.sin(angle)) for angle in np.linspace(0, 2 * np.pi, 99)]
+    circ2.append(circ2[0])
+
+    circ1 = np.array(circ1, dtype=np.float32)
+    circ2 = np.array(circ2, dtype=np.float32)
+
+    small_in_big = kernels["_points_inside_polygon"](
+        points=circ1,
+        poly_points=circ2,
+        len_points=circ1.shape[0],
+        len_poly_points=circ2.shape[0],
+    )
+
+    assert bool(small_in_big)
+
+    big_in_small = kernels["_points_inside_polygon"](
+        points=circ2,
+        poly_points=circ1,
+        len_points=circ2.shape[0],
+        len_poly_points=circ1.shape[0],
+    )
+
+    assert not bool(big_in_small)
+
+
+def test_points_inside_polygon_simple(kernels):
+    poly_big = [(1, 1), (2, 3.5), (4.5, 3.5), (4.5, 1), (1, 1)]
+    poly_small = [(2, 2), (3, 3), (4, 2), (3, 1.5), (2, 2)]
+
+    poly_big = np.array(poly_big, dtype=np.float32)
+    poly_small = np.array(poly_small, dtype=np.float32)
+
+    small_in_big = kernels["_points_inside_polygon"](
+        points=poly_small,
+        poly_points=poly_big,
+        len_points=poly_small.shape[0],
+        len_poly_points=poly_big.shape[0],
+    )
+
+    import matplotlib.pyplot as plt
+
+    assert bool(small_in_big)
+
+    big_in_small = kernels["_points_inside_polygon"](
+        points=poly_big,
+        poly_points=poly_small,
+        len_points=poly_big.shape[0],
+        len_poly_points=poly_small.shape[0],
+    )
+
+    assert not bool(big_in_small)
+
+
+def test_points_inside_polygon_simpler(kernels):
+    poly_big = np.array([
+        [1.0000000e+00, 0.0000000e+00],
+        [-5.0000006e-01, 8.6602539e-01],
+        [-4.9999991e-01, -8.6602545e-01],
+        [1.0000000e+00, 0.0000000e+00],
+    ], dtype=np.float32)
+    poly_small = np.array([
+        [1.1466468e-01, 0.0000000e+00],
+        [-5.7332322e-02, 9.9302538e-02],
+        [-5.7332378e-02, -9.9302508e-02],
+        [1.1466468e-01, 0.0000000e+00],
+    ], dtype=np.float32)
+
+    small_in_big = kernels["_points_inside_polygon"](
+        points=poly_small,
+        poly_points=poly_big,
+        len_points=poly_small.shape[0],
+        len_poly_points=poly_big.shape[0],
+    )
+
+    assert bool(small_in_big)
+
+    big_in_small = kernels["_points_inside_polygon"](
+        points=poly_big,
+        poly_points=poly_small,
+        len_points=poly_big.shape[0],
+        len_poly_points=poly_small.shape[0],
+    )
+
+    assert not bool(big_in_small)
+
+
+@pytest.mark.parametrize(
+    'shape,aper_params,aper_tol,beam_params,halo_params,expected',
+    [
+        (
+            'circle', (1,), (0, 0, 0),
+            {'exn': 1e-3, 'eyn': 1e-3, 'gamma': 10, 'betx': 1, 'bety': 1, 'x': 0, 'y': 0, 'dx': 0, 'dy': 0},
+            {},
+            100,
+        ),
+        (
+            'circle', (1,), (0, 0, 0),
+            {'exn': 1e-3, 'eyn': 1e-3, 'gamma': 10, 'betx': 1, 'bety': 1, 'x': 0, 'y': 0, 'dx': 0, 'dy': 0},
+            {'halo_primary': 1, 'halo_r': 2, 'halo_x': 2, 'halo_y': 2},
+            50,
+        ),
+        (
+            'rectangle', (1, 1), (0, 0, 0),
+            {'exn': 1e-3, 'eyn': 1e-3, 'gamma': 10, 'betx': 1, 'bety': 1, 'x': 0, 'y': 0, 'dx': 0, 'dy': 0},
+            {},
+            100,
+        ),
+        (
+            'rectangle', (1.1, 1.2), (0, 0, 0),
+            {'exn': 1e-3, 'eyn': 1e-3, 'gamma': 10, 'betx': 1, 'bety': 1, 'x': -0.1, 'y': 0.2, 'dx': 0, 'dy': 0},
+            {},
+            100,
+        ),
+        (
+            'racetrack', (0.28, 0.43, 0.13, 0.172), (0.002, 0.006, 0.002),
+            {'exn': 4e-3, 'eyn': 4e-3, 'gamma': 10, 'betx': 9, 'bety': 16, 'x': 0, 'y': 0, 'dx': 0, 'dy': 0},
+            {
+                'tol_beta_beating': 0.8,
+                'tol_disp': 1.25,
+                'tol_disp_ref_beta': 4,
+                'tol_disp_ref_dx': 20,
+                'halo_primary': 10,
+                'halo_r': 0.7,
+                'halo_x': 0.5,
+                'halo_y': 0.6,
+                'tol_co': 0.002,
+                'delta_rms': 0.001,
+            },
+            100,
+        ),
+        (
+            'racetrack', (0.3, 0.5, 0.13, 0.172), (0.002, 0.006, 0.002),
+            {'exn': 4e-3, 'eyn': 4e-3, 'gamma': 10, 'betx': 9, 'bety': 16, 'x': -0.02, 'y': 0.07, 'dx': 0, 'dy': 0},
+            {
+                'tol_beta_beating': 0.8,
+                'tol_disp': 1.25,
+                'tol_disp_ref_beta': 4,
+                'tol_disp_ref_dx': 20,
+                'halo_primary': 10,
+                'halo_r': 0.7,
+                'halo_x': 0.5,
+                'halo_y': 0.6,
+                'tol_co': 0.002,
+                'delta_rms': 0.001,
+            },
+            100,
+        ),
+        (
+            'racetrack', (0.32, 0.478, 0.13, 0.172), (0.002, 0.006, 0.002),
+            {
+                'exn': 4e-3,
+                'eyn': 4e-3,
+                'gamma': 10,
+                'betx': 9,
+                'bety': 16,
+                'x': 0,
+                'y': 0,
+                'dx': 10 * np.sqrt(13),
+                'dy': 10 * np.sqrt(17)
+            },
+            {
+                'tol_beta_beating': 0.8,
+                'tol_disp': 1.25,
+                'tol_disp_ref_beta': 4,
+                'tol_disp_ref_dx': 20,
+                'halo_primary': 10,
+                'halo_r': 0.7,
+                'halo_x': 0.5,
+                'halo_y': 0.6,
+                'tol_co': 0.002,
+                'delta_rms': 0.001,
+            },
+            100,
+        ),
+        (
+            'racetrack', (0.4, 0.5, 0.13, 0.172), (0.002, 0.006, 0.002),
+            {
+                'exn': 4e-3,
+                'eyn': 4e-3,
+                'gamma': 10,
+                'betx': 9,
+                'bety': 16,
+                'x': -0.08,
+                'y': 0.022,
+                'dx': 10 * np.sqrt(13),
+                'dy': 10 * np.sqrt(17)
+            },
+            {
+                'tol_beta_beating': 0.8,
+                'tol_disp': 1.25,
+                'tol_disp_ref_beta': 4,
+                'tol_disp_ref_dx': 20,
+                'halo_primary': 10,
+                'halo_r': 0.7,
+                'halo_x': 0.5,
+                'halo_y': 0.6,
+                'tol_co': 0.002,
+                'delta_rms': 0.001,
+            },
+            100,
+        ),
+    ],
+    ids=[
+        'circle',
+        'circle-halo',
+        'square',
+        'square-orbit',
+        'racetrack-aper_tols-halo',
+        'racetrack-orbit-aper_tols-halo',
+        'racetrack-dispersion-aper_tols-halo',
+        'racetrack-dispersion-orbit-aper_tols-halo',
+    ]
+)
+def test_get_aperture_sigmas_at_element_analytic(shape, aper_params, aper_tol, beam_params, halo_params, expected, context):
+    def madx_list(l):
+        return '{' + ', '.join([str(v) for v in l]) + '}'
+
+    halo_params_for_test = {
+        'emitx_norm': beam_params['exn'],
+        'emity_norm': beam_params['eyn'],
+        'tol_beta_beating': 1,
+        'tol_disp': 0,
+        'tol_disp_ref_beta': 1,
+        'tol_disp_ref_dx': 0,
+        'halo_primary': 1,
+        'halo_r': 1,
+        'halo_x': 1,
+        'halo_y': 1,
+        'tol_co': 0,
+        'delta_rms': 0,
+    }
+    halo_params_for_test.copy()
+    halo_params_for_test.update(halo_params)
+    halo_params = halo_params_for_test
+
+    lattice = f"""
+        m1: marker, apertype = {shape}, aperture = {madx_list(aper_params)}, aper_tol = {madx_list(aper_tol)};
+
+        seq: sequence,l = 1;
+            m1, at=0;
+        endsequence;
+    """
+
+    env = xt.load(string=lattice, format='madx', install_limits=False)
+    seq = env['seq']
+    seq.set_particle_ref('proton', gamma0=beam_params['gamma'])
+    tw = seq.twiss4d(
+        betx=beam_params['betx'],
+        bety=beam_params['bety'],
+        x=beam_params['x'],
+        y=beam_params['y'],
+        dx=beam_params['dx'],
+        dy=beam_params['dy'],
+    )
+
+    aperture_model = Aperture.from_line_with_associated_apertures(seq, line_name='seq', context=context)
+    aperture_model.halo_params.update(halo_params)
+
+    # Needed as these quantities are not imported by the native madloader
+    aperture_model.model.profiles[0].tol_r = aper_tol[0]
+    aperture_model.model.profiles[0].tol_x = aper_tol[1]
+    aperture_model.model.profiles[0].tol_y = aper_tol[2]
+
+    # Compute n1 with Xsuite
+    computed_n1, tw, apertures_points, envelope_points = aperture_model.get_aperture_sigmas_at_element(
+        line_name='seq',
+        element_name='m1',
+        resolution=None,
+        twiss=tw,
+        cross_sections_num_points=144,
+        envelopes_num_points=144,
+    )
+
+    # There are two sources of error wrt. to the analytic solution:
+    # - precision of 0.01 on the bisection defined in beam_aperture.h
+    # - error coming from the fact that we are comparing polygons, not ideal shapes (especially a problem if x, y != 0)
+    xo.assert_allclose(computed_n1, expected, atol=0.01, rtol=0.002)
+
+
+@pytest.mark.parametrize(
+    'shape,aper_params,aper_tol,exn,eyn,gamma,betx,bety,x,y,halo_params',
+    [
+        ('ellipse', (1, 1.3), (0.01, 0.015, 0.01), 1e-3, 1e-3, 10, 1, 1, 0, 0, {}),
+        ('circle', (1,), (0.01, 0.01, 0.02), 1e-3, 1e-3, 10, 1, 1, 0, 0,
+            {'halo_primary': 1, 'halo_r': 2, 'halo_x': 2, 'halo_y': 2}),
+        ('rectangle', (1, 1), (0.01, 0.02, 0.03), 1e-3, 1e-3, 10, 1, 1, 0, 0, {}),
+        ('rectangle', (1.1, 1.2), (0.04, 0.02, 0.02), 1e-3, 1e-3, 10, 1, 1, -0.1, 0.2,
+            {'halo_primary': 1, 'halo_r': 2, 'halo_x': 2, 'halo_y': 2}),
+    ],
+    ids=['ellipse-tols', 'circle-halo-tols', 'square-tols', 'square-orbit-halo-tols'],
+)
+def test_get_aperture_sigmas_at_element_vs_madx(
+        shape,
+        aper_params,
+        aper_tol,
+        exn,
+        eyn,
+        gamma,
+        betx,
+        bety,
+        x,
+        y,
+        halo_params,
+        context
+):
+    """Test the computation of sigmas vs MAD-X
+
+    MAD-X uses a different approach to computing N1 when dispersion is present, hence we only test the cases without.
+    """
+    def madx_list(l):
+        return '{' + ', '.join([str(v) for v in l]) + '}'
+
+    halo_params_for_test = {
+        'emitx_norm': exn,
+        'emity_norm': eyn,
+        'tol_beta_beating': 1,
+        'tol_disp': 0,
+        'tol_disp_ref_beta': 1,
+        'tol_disp_ref_dx': 0,
+        'halo_primary': 1,
+        'halo_r': 1,
+        'halo_x': 1,
+        'halo_y': 1,
+        'tol_co': 0,
+        'delta_rms': 0,
+    }
+    halo_params_for_test.copy()
+    halo_params_for_test.update(halo_params)
+    halo_params = halo_params_for_test
+
+    mad = Madx(stdout=False)
+    mad.input(f"""
+        m1: marker, apertype = {shape}, aperture = {madx_list(aper_params)}, aper_tol = {madx_list(aper_tol)};
+    
+        seq: sequence,l = 1;
+            m1, at=0;
+        endsequence;
+        
+        beam, particle = proton, exn = {exn}, eyn = {eyn}, gamma = {gamma};
+        use, sequence = seq;
+        twiss, betx = {betx}, bety = {bety}, x = {x}, y = {y};
+        
+        aperture,
+            dqf = {halo_params['tol_disp_ref_dx']},
+            betaqfx = {halo_params['tol_disp_ref_beta']},
+            dp = {halo_params['delta_rms']},  ! called `twiss_deltap` in the table
+            dparx = {halo_params['tol_disp']},
+            dpary = {halo_params['tol_disp']},
+            cor = {halo_params['tol_co']},
+            bbeat = {halo_params['tol_beta_beating']},
+            halo = {madx_list([halo_params[param] for param in ('halo_primary', 'halo_r', 'halo_x', 'halo_y')])};
+        
+        write, table = aperture;
+    """)
+
+    madx_n1 = mad.table['aperture'].n1[1]
+
+    env = xt.Environment.from_madx(madx=mad, enable_layout_data=True)
+    seq = env['seq']
+    seq.set_particle_ref('proton', gamma0=mad.beam.gamma)
+    tw = seq.twiss4d(betx=betx, bety=bety, x=x, y=y)
+
+    xo.assert_allclose(mad.beam.gamma, seq.particle_ref.gamma0, atol=1e-10)
+    xo.assert_allclose(mad.beam.beta, seq.particle_ref.beta0, atol=1e-10)
+
+    aperture_model = Aperture.from_line_with_madx_metadata(seq, line_name='seq', context=context)
+    aperture_model.halo_params.update(halo_params)
+
+    # Sanity checks
+    aper_summ = mad.table.aperture.summary
+    xo.assert_allclose(aperture_model.halo_params['tol_disp_ref_dx'], aper_summ.dqf, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['tol_disp_ref_beta'], aper_summ.betaqfx, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['delta_rms'], aper_summ.dp_bucket_size, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['tol_disp'], aper_summ.paras_dx, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['tol_co'], aper_summ.co_radius, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['tol_beta_beating'], aper_summ.beta_beating, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['halo_primary'], aper_summ.halo_prim, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['halo_r'], aper_summ.halo_r, atol=3e-6, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['halo_x'], aper_summ.halo_h, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['halo_y'], aper_summ.halo_v, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['emitx_norm'], mad.beam.exn, atol=1e-8, rtol=0)
+    xo.assert_allclose(aperture_model.halo_params['emity_norm'], mad.beam.eyn, atol=1e-8, rtol=0)
+
+    # Compute n1 with Xsuite
+    computed_n1, tw, apertures_points, envelope_points = aperture_model.get_aperture_sigmas_at_element(
+        line_name='seq',
+        element_name='m1',
+        resolution=None,
+        twiss=tw,
+        cross_sections_num_points=144,
+        envelopes_num_points=144,
+    )
+
+    xo.assert_allclose(madx_n1, computed_n1, rtol=0.01)

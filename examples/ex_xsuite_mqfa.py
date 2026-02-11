@@ -13,18 +13,13 @@ lhc_length = b1.get_length()
 
 aperture_model = Aperture.from_line_with_madx_metadata(b1, line_name='b1', context=context)
 
-mqxfa_name = 'mqxfa.a1r1/b1'
-# tw, mqxfa_sigmas, interpolated_points, envelope_at_max_sigma = aperture_model.get_aperture_sigmas_at_element(
-#     line_name="b1",
-#     element_name=mqxfa_name,
-#     resolution=0.1,
-#     cross_sections_num_points=100,
-#     envelopes_num_points=36,
-# )
-mqxfa_sigmas, tw, interpolated_points, envelope_at_max_sigma = aperture_model.get_aperture_sigmas_at_s(
+# mqxfa_name = 'mqxfa.a1r1/b1'
+mqxfa_name = 'mqy.4r1.b1'
+mqxfa_sigmas, tw, interpolated_points, envelope_at_max_sigma = aperture_model.get_aperture_sigmas_at_element(
     line_name="b1",
-    s_positions=np.linspace(0, lhc_length, 1000),
-    cross_sections_num_points=36,
+    element_name=mqxfa_name,
+    resolution=0.1,
+    cross_sections_num_points=100,
     envelopes_num_points=36,
 )
 
@@ -34,17 +29,17 @@ plt.plot(tw.s, np.max(np.abs(interpolated_points[:, :, 1]), axis=1), label='max 
 plt.legend()
 plt.show()
 
-# plt.scatter(tw.x, tw.y)
-#
-# for pt in interpolated_points:
-#     plt.plot(pt[:, 0], pt[:, 1], c='k')
-#
-# for pt in envelope_at_max_sigma:
-#     plt.plot(pt[:, 0], pt[:, 1])
-#
-# plt.gca().set_aspect('equal')
-# plt.legend()
-# plt.show()
+plt.scatter(tw.x, tw.y)
+
+for pt in interpolated_points:
+    plt.plot(pt[:, 0], pt[:, 1], c='k')
+
+for pt in envelope_at_max_sigma:
+    plt.plot(pt[:, 0], pt[:, 1])
+
+plt.gca().set_aspect('equal')
+plt.legend()
+plt.show()
 
 # for the MBRC lofting is needed
 # look into ex_interpolate.py

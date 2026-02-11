@@ -9,20 +9,11 @@
 #include "base.h"
 
 /* 2D PATH made of segments
-type: 0=line, 1=arc, 2=ellipse arc, 3=quadratic bezier, 4=cubic bezier
-data:
- line: x1,y1,x2,y2
- arc: cx,cy,start_angle,end_angle
- ellipse arc: cx,cy,rx,ry,rotation,start_angle,end_angle
- quadratic bezier: x1,y1,x2,y2,cx,cy
- cubic bezier: x1,y1,x2,y2,cx1,cy1,cx2,cy2
 
 ISSUES:
  - no bezier segments yet
  - no splines yet
  - path assumed to be continuous but not enforced by the structure
-
-
 */
 
 #ifndef M_2PI
@@ -104,7 +95,7 @@ int geom2d_path_get_len_points(const G2DPath *path);
 void geom2d_path_get_points(const G2DPath *path, G2DPoint *out_points);
 int geom2d_path_get_len_corners(const G2DPath *path);
 void geom2d_path_get_corner_steps(const G2DPath *path, float_type *out_steps);
-void geom2d_path_get_n_uniform_points(const G2DPath *path, int n_points, G2DPoint *out_points);
+void geom2d_poly_get_n_uniform_points(const G2DPath *path, int n_points, G2DPoint *out_points);
 
 
 /* ===== Line segment functions ===== */
@@ -446,7 +437,7 @@ Contract: len(out_segments)=8; postlen(out_segments)=out_len
 /* ===== End racetrack segment functions ===== */
 
 void geom2d_segments_from_octagon(float_type halfwidth, float_type halfheight, float_type halfdgap, G2DSegment *out_segments, int *out_len)
-/* Create an octagon defined by halfwidth, halfheight, and half 45 degrees gap 
+/* Create an octagon defined by halfwidth, halfheight, and half 45 degrees gap
 
 Contract: len(out_segments)=8; postlen(out_segments)=out_len
 */
@@ -861,7 +852,7 @@ void geom2d_path_get_corner_steps(const G2DPath *path, float_type *out_steps)
     }
 }
 
-void geom2d_path_get_n_uniform_points(const G2DPath *path, int n_points, G2DPoint *out_points)
+void geom2d_poly_get_n_uniform_points(const G2DPath *path, int n_points, G2DPoint *out_points)
 {
     float_type total_length = geom2d_path_get_length(path);
     float_type ds = total_length / (n_points - 1);
@@ -876,20 +867,20 @@ void geom2d_path_get_n_uniform_points(const G2DPath *path, int n_points, G2DPoin
         const G2DSegment* segment = &path->segments[seg_idx];
         seg_length = geom2d_segment_get_length(segment);
         seg_end_length = seg_start_length + seg_length;
-        float_type cut_point;
+        float_type at_absolute;
 
-        while (i < n_points && (cut_point = fmin(i * ds, total_length)) <= seg_end_length)
+        while (i < n_points - 1 && (at_absolute = i * ds) <= seg_end_length)
         {
-            float_type at = cut_point - seg_start_length;
+            float_type at = at_absolute - seg_start_length;
             switch (path->segments[seg_idx].type)
             {
-            case 0: /* line */
+            case CGEOM_LINE_SEGMENT_TYPE:
                 geom2d_line_segment_get_points_at_steps(segment, &at, 1, &out_points[i]);
                 break;
-            case 1: /* arc */
+            case CGEOM_ARC_SEGMENT_TYPE:
                 geom2d_arc_segment_get_points_at_steps(segment, &at, 1, &out_points[i]);
                 break;
-            case 2: /* ellipse arc */
+            case CGEOM_ELLIPSE_ARC_SEGMENT_TYPE:
                 geom2d_ellipse_segment_get_points_at_steps(segment, &at, 1, &out_points[i]);
                 break;
             default:
@@ -899,6 +890,10 @@ void geom2d_path_get_n_uniform_points(const G2DPath *path, int n_points, G2DPoin
         }
         seg_start_length = seg_end_length;
     }
+
+    // Close the polygon explicitly: avoids numerical issues on computing the last point, such as overshooting.
+    // Also, if the start and end points are slightly different it can knock off the point-in-poly test.
+    out_points[n_points - 1] = out_points[0];
 }
 
 #endif /* CGEOM_PATH_H */

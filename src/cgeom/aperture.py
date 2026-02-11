@@ -6,15 +6,16 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 import numpy as np
 import xobjects as xo
 from xobjects.context import XContext
+from xtrack import TwissInit, TwissTable
 from xtrack.environment import Environment
 from xtrack.progress_indicator import progress
 
 from cgeom.kernels import build_aperture_kernels
 from cgeom.profile_converters import (LimitTypes, profile_from_limit_element,
                                       profile_from_madx_aperture)
-from cgeom.structures import (ApertureModel, ApertureType, CrossSections,
-                              Profile, ProfilePosition, ProfileTypes,
-                              TypePosition)
+from cgeom.structures import (ApertureModel, ApertureType, BeamData, CrossSections,
+                              Profile, ProfilePosition, ShapeTypes,
+                              TypePosition, TwissData)
 
 
 def transform_matrix(dx, dy, ds, theta, phi, psi):
@@ -83,8 +84,14 @@ class Aperture:
         if halo_params is not None:
             self.halo_params.update(halo_params)
 
+    def call_kernel(self, name, **kwargs):
+        if name not in self.context.kernels:
+            build_aperture_kernels(self.context)
+
+        return self.context.kernels[name](**kwargs)
+
     @classmethod
-    def from_line_with_madx_metadata(cls, line, line_name=None):
+    def from_line_with_madx_metadata(cls, line, line_name=None, context=None):
         env = line.env
         survey = line.survey()
         survey_names = survey.name[:-1]  # _end_point is not an element
@@ -116,12 +123,15 @@ class Aperture:
                 continue
 
             if aper_name not in aperture_indices:
-                shape, params, tols = element_metadata['aperture']
-                profile = profile_from_madx_aperture(shape, params)
+                shape_name, params, tols = element_metadata['aperture']
+                shape = profile_from_madx_aperture(shape_name, params)
 
-                if not profile:
+                if not shape:
                     # There is not really an aperture here, continue
                     continue
+
+                tol_r, tol_x, tol_y = tols
+                profile = Profile(shape=shape, tol_r=tol_r, tol_x=tol_x, tol_y=tol_y)
 
                 assert len(types) == len(profiles)  # in MAD-X we will have just one type per profile
 
@@ -129,7 +139,7 @@ class Aperture:
                 aperture_indices[aper_name] = aper_idx
 
                 profile_position = ProfilePosition(profile_index=aper_idx)
-                offset_x, offset_y = element_metadata.get('offset', (0.0, 0.0))
+                offset_x, offset_y = 0, 0  # TODO: fill properly based on metadata['aperture_offset'][...]['x_off', ...]
                 profile_position.shift_x = offset_x
                 profile_position.shift_y = offset_y
                 # TODO: any other transformations from metadata?
@@ -181,11 +191,12 @@ class Aperture:
             type_position_list=type_positions_list,
             profile_indices=aperture_indices,
             profile_list=profiles,
+            context=context,
         )
         return aperture
 
     @classmethod
-    def from_line_with_associated_apertures(cls, line, line_name=None):
+    def from_line_with_associated_apertures(cls, line, line_name=None, context=None):
         env = line.env
         survey = line.survey()
         survey_names = survey.name[:-1]  # _end_point is not an element
@@ -235,7 +246,7 @@ class Aperture:
                 aperture_type = ApertureType(curvature=curvature, positions=positions)
                 types.append(aperture_type)
 
-                profiles.append(profile)
+                profiles.append(Profile(shape=profile))
 
             # Apply element transformations to type position
             if element.transformations_active:
@@ -272,11 +283,12 @@ class Aperture:
             type_position_list=type_positions_list,
             profile_indices=aperture_indices,
             profile_list=profiles,
+            context=context,
         )
         return aperture
 
     @classmethod
-    def from_line_with_limits(cls, line, line_name=None):
+    def from_line_with_limits(cls, line, line_name=None, context=None):
         env = line.env
         survey = line.survey()
         survey_names = survey.name[:-1]  # _end_point is not a limit
@@ -296,7 +308,7 @@ class Aperture:
 
             indices[name] = aper_idx
             profile, center_x, center_y = profile_from_limit_element(element)
-            profiles.append(profile)
+            profiles.append(Profile(shape=profile))
 
             profile_position = ProfilePosition(profile_index=aper_idx)
             if element.transformations_active:
@@ -329,6 +341,7 @@ class Aperture:
             type_position_list=type_positions_list,
             profile_indices=indices,
             profile_list=profiles,
+            context=context,
         )
         return aperture
 
@@ -341,7 +354,8 @@ class Aperture:
             type_list: List[ApertureType],
             type_position_list: List[TypePosition],
             profile_indices: Dict[str, int],
-            profile_list: List[ProfileTypes],
+            profile_list: List[ShapeTypes],
+            context: XContext,
     ) -> Aperture:
         """Build the Aperture class and its comprising xobjects.
 
@@ -369,6 +383,8 @@ class Aperture:
         if list(profile_indices.values()) != list(range(len(profile_indices))):
             raise ValueError('Expected profile_indices to be ordered by index')
 
+        context = context or xo.ContextCpu()
+
         model = ApertureModel(
             line_name=line_name,
             type_positions=type_position_list,
@@ -376,13 +392,14 @@ class Aperture:
             profiles=profile_list,
             type_names=list(type_indices.keys()),
             profile_names=list(profile_indices.keys()),
+            _context=context,
         )
 
         aperture = cls(
             env=env,
             model=model,
             cross_sections=None,
-            context=model._context,
+            context=context,
         )
 
         return aperture
@@ -399,20 +416,116 @@ class Aperture:
     def profile_name_for_position(self, profile_position: ProfilePosition) -> str:
         return self.model.profile_name_for_index(profile_position.profile_index)
 
-    def get_aperture_sigma(self, line_name: str, element_name: str, resolution: float) -> np.ndarray:
+    def get_aperture_sigmas_at_element(
+            self,
+            line_name: str,
+            element_name: str,
+            resolution: Optional[float] = None,
+            twiss: Optional[TwissTable] = None,
+            **kwargs,
+) -> Tuple[TwissTable, np.ndarray, np.ndarray, np.ndarray]:
+        """Compute the maximum number of sigmas at which the beam fits in the aperture at element ``element_name``.
+
+        Parameters
+        ----------
+        line_name
+            The name of the line for which the aperture model is built.
+        elment_name
+            The name of the element at which the sigmas should be computed.
+        resolution
+            The desired resolution, in meters along s, at which the sigmas should be computed. If not provided only the
+            values at the entry and exit will be output.
+        twiss
+            Optionally provided twiss table from which to derive the initial beam parameters at the element.
+        **kwargs
+            Other parameters to be forwarded to ``Aperture.get_aperture_sigmas_at_s``.
+        """
         line = self.env[line_name]
         element = line[element_name]
         s_start = line.get_s_position(element_name)
         element_length = getattr(element, 'length', 0)
         s_end = s_start + element_length
 
-        cuts = np.linspace(s_start, s_end, int(element_length / resolution))
+        if resolution is not None:
+            num_cuts = int(element_length / resolution)
+            s_positions = np.linspace(s_start, s_end, num_cuts)
+        else:
+            s_positions = [s_start, s_end]
+
+        twiss_init = twiss.get_twiss_init(at_element=element_name) if twiss else None
+
+        return self.get_aperture_sigmas_at_s(line_name, s_positions, twiss_init, **kwargs)
+
+    def get_aperture_sigmas_at_s(
+            self,
+            line_name: str,
+            s_positions: Iterable[float],
+            twiss_init: Optional[TwissInit] = None,
+            include_all_twiss_s=True,
+            cross_sections_num_points: int = 36,
+            envelopes_num_points: int = 36,
+    ) -> Tuple[np.ndarray, TwissTable, np.ndarray, np.ndarray]:
+        """Compute the maximum number of sigmas at which the beam fits in the aperture at element ``element_name``.
+
+        Parameters
+        ----------
+        line_name
+            The name of the line for which the aperture model is built.
+        s_positions
+            List of s positions at which to calculate the sigmas.
+        twiss_init
+            Optionally provided initial twiss conditions.
+        resolution
+            The desired resolution, in meters along s, at which the sigmas should be computed. If not provided only the
+            values at the entry and exit will be output.
+        **kwargs
+            Other parameters to be forwarded to ``Aperture.get_aperture_sigmas_at_s``.
+        """
+        line = self.env[line_name]
         line_sliced = line.copy()
-        line_sliced.cut_at_s(cuts)
+        line_sliced.cut_at_s(s_positions)
+        s_start, s_end = s_positions[0], s_positions[-1]
 
-        self.cross_sections = self._build_cross_sections(line_name, 100)
+        self.cross_sections = self._build_cross_sections(line_name, cross_sections_num_points)
 
-        sliced_twiss = line_sliced.twiss().rows[s_start:s_end:'s']
+        sliced_twiss = line_sliced.twiss(init=twiss_init).rows[s_start:s_end:'s']
+
+        if not include_all_twiss_s:
+            raise NotImplementedError("This is not implemented yet: s_positions coming from the twiss are included.")
+
+        num_slices = len(sliced_twiss.s)
+        twiss_data = self._build_twiss_data(line_name, sliced_twiss)
+        beam_data = BeamData(**self.halo_params)
+        interpolated_points = np.zeros(shape=(num_slices, self.cross_sections.num_points, 2), dtype=np.float32)
+        envelope_at_max_sigma = np.zeros(shape=(num_slices, envelopes_num_points, 2), dtype=np.float32)
+        sigmas = np.zeros(num_slices, dtype=np.float32)
+
+        self.call_kernel(
+            'compute_max_aperture_sigma',
+            model=self.model,
+            cross_sections=self.cross_sections,
+            twiss_data=twiss_data,
+            beam_data=beam_data,
+            out_interpolated_apertures=interpolated_points,
+            envelope_num_points=envelopes_num_points,
+            out_envelope_at_max_sigma=envelope_at_max_sigma,
+            sigmas=sigmas,
+        )
+        return sigmas, sliced_twiss, interpolated_points, envelope_at_max_sigma
+
+    def _build_twiss_data(self, line_name: str, twiss_table: TwissTable) -> TwissData:
+        twiss_data = TwissData(
+            s=twiss_table.s,  # s position
+            x=twiss_table.x,  # closed orbit x
+            y=twiss_table.y,  # closed orbit y
+            betx=twiss_table.betx,  # beta x
+            bety=twiss_table.bety,  # beta y
+            dx=twiss_table.dx,  # dispersion x
+            dy=twiss_table.dy,  # dispersion y
+            delta=twiss_table.delta,  # relative energy deviation
+            gamma=self.env[line_name].particle_ref.gamma0,  # relativistic gamma
+        )
+        return twiss_data
 
     def _build_cross_sections(self, line_name: str, num_points: int) -> CrossSections:
         survey = self.env[line_name].survey()
@@ -448,9 +561,7 @@ class Aperture:
                 cross_sections.type_position_indices[idx] = type_pos_idx
                 cross_sections.profile_position_indices[idx] = profile_pos_idx
 
-        if 'build_profile_polygons' not in self.context.kernels:
-            build_aperture_kernels(self.context)
-        self.context.kernels.build_profile_polygons(model=self.model, cross_sections=cross_sections)
+        self.call_kernel('build_profile_polygons', model=self.model, cross_sections=cross_sections)
 
         return cross_sections
 

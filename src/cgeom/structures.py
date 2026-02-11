@@ -45,11 +45,29 @@ class SVGShape(xo.Struct):
     svg_data = xo.String
 
 
-ProfileTypes = Union[Circle, Rectangle, Ellipse, RectEllipse, Racetrack, Octagon, Polygon, SVGShape]
+ShapeTypes = Union[Circle, Rectangle, Ellipse, RectEllipse, Racetrack, Octagon, Polygon, SVGShape]
 
 
-class Profile(xo.UnionRef):
-    _reftypes = get_args(ProfileTypes)
+class Shape(xo.UnionRef):
+    _reftypes = get_args(ShapeTypes)
+
+
+class Profile(xo.Struct):
+    """Structure representing a profile with associated tolerances.
+
+    Parameters
+    ----------
+    tol_r: float
+        Radial tolerance for point-in-aperture check.
+    tol_x: float
+        Horizontal tolerance for point-in-aperture check.
+    tol_y: float
+        Vertical tolerance for point-in-aperture check.
+    """
+    shape = Shape
+    tol_r = xo.Float32
+    tol_x = xo.Float32
+    tol_y = xo.Float32
 
 
 class ProfilePosition(xo.Struct):
@@ -124,7 +142,7 @@ class ApertureModel(xo.Struct):
         line_name: str,
         type_positions: List[TypePosition],
         types: List[ApertureType],
-        profiles: List[ProfileTypes],
+        profiles: List[Profile],
         type_names: List[str],
         profile_names: List[str],
         **kwargs,
@@ -156,3 +174,31 @@ class CrossSections(xo.Struct):
     type_position_indices = xo.UInt32[:]
     profile_position_indices = xo.UInt32[:]
     points = xo.Float32[:, :, 2]
+
+
+class TwissData(xo.Struct):
+    s = xo.Float32[:]     # s position
+    x = xo.Float32[:]     # closed orbit x
+    y = xo.Float32[:]     # closed orbit y
+    betx = xo.Float32[:]  # beta x
+    bety = xo.Float32[:]  # beta y
+    dx = xo.Float32[:]    # dispersion x
+    dy = xo.Float32[:]    # dispersion y
+    delta = xo.Float32[:] # relative energy deviation
+    gamma = xo.Float32    # relativistic gamma
+
+
+class BeamData(xo.Struct):
+    emitx_norm = xo.Float64        # normalized emittance x
+    emity_norm = xo.Float64        # normalized emittance y
+    delta_rms = xo.Float64         # rms energy spread
+    tol_co = xo.Float64            # tolerance for closed orbit [co_radius]
+    tol_disp = xo.Float64          # tolerance for normalized dispersion [dqf]
+    tol_disp_ref_dx = xo.Float64   # tolerance for reference dispersion derivative [paras_dx]
+    tol_disp_ref_beta = xo.Float64 # tolerance for reference dispersion beta [betaqfx]
+    tol_energy = xo.Float64        # tolerance for energy error [twiss_deltap]
+    tol_beta_beating = xo.Float64  # tolerance for beta beating in sigma [beta_beating]
+    halo_x = xo.Float64            # n sigma of horizontal halo
+    halo_y = xo.Float64            # n sigma of vertical halo
+    halo_r = xo.Float64            # n sigma of 45 degree halo
+    halo_primary = xo.Float64      # n sigma of primary halo

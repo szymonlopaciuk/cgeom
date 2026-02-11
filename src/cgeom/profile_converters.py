@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 from xtrack.beam_elements import apertures
 
-from cgeom.structures import (Circle, Ellipse, Octagon, Polygon, ProfileTypes,
+from cgeom.structures import (Circle, Ellipse, Octagon, Polygon, ShapeTypes,
                               Racetrack, Rectangle, RectEllipse)
 
 LimitTypes = Union[
@@ -17,7 +17,7 @@ LimitTypes = Union[
 
 
 @singledispatch
-def profile_from_limit_element(element: LimitTypes) -> Tuple[ProfileTypes, float, float]:
+def profile_from_limit_element(element: LimitTypes) -> Tuple[ShapeTypes, float, float]:
     """
     Convert a limit beam element to a profile object.
 
@@ -32,7 +32,7 @@ def profile_from_limit_element(element: LimitTypes) -> Tuple[ProfileTypes, float
 
 
 @profile_from_limit_element.register
-def _profile_from_limit_rect(element: apertures.LimitRect) -> Tuple[ProfileTypes, float, float]:
+def _profile_from_limit_rect(element: apertures.LimitRect) -> Tuple[ShapeTypes, float, float]:
     half_width = (element.max_x - element.min_x) / 2
     half_height = (element.max_y - element.min_y) / 2
     x = (element.min_x + element.max_x) / 2
@@ -42,7 +42,7 @@ def _profile_from_limit_rect(element: apertures.LimitRect) -> Tuple[ProfileTypes
 
 
 @profile_from_limit_element.register
-def _profile_from_limit_ellipse(element: apertures.LimitEllipse) -> Tuple[ProfileTypes, float, float]:
+def _profile_from_limit_ellipse(element: apertures.LimitEllipse) -> Tuple[ShapeTypes, float, float]:
     rx = element.a
     ry = element.b
     ellipse = Ellipse(half_major=rx, half_minor=ry)
@@ -50,7 +50,7 @@ def _profile_from_limit_ellipse(element: apertures.LimitEllipse) -> Tuple[Profil
 
 
 @profile_from_limit_element.register
-def _profile_from_limit_rect_ellipse(element: apertures.LimitRectEllipse) -> Tuple[ProfileTypes, float, float]:
+def _profile_from_limit_rect_ellipse(element: apertures.LimitRectEllipse) -> Tuple[ShapeTypes, float, float]:
     max_x = element.max_x
     max_y = element.max_y
     rx = element.a
@@ -60,7 +60,7 @@ def _profile_from_limit_rect_ellipse(element: apertures.LimitRectEllipse) -> Tup
 
 
 @profile_from_limit_element.register
-def _profile_from_limit_racetrack(element: apertures.LimitRacetrack) -> Tuple[ProfileTypes, float, float]:
+def _profile_from_limit_racetrack(element: apertures.LimitRacetrack) -> Tuple[ShapeTypes, float, float]:
     half_width = (element.max_x - element.min_x) / 2
     half_height = (element.max_y - element.min_y) / 2
     x = (element.min_x + element.max_x) / 2
@@ -77,14 +77,14 @@ def _profile_from_limit_racetrack(element: apertures.LimitRacetrack) -> Tuple[Pr
 
 
 @profile_from_limit_element.register
-def _profile_from_limit_polygon(element: apertures.LimitPolygon) -> Tuple[ProfileTypes, float, float]:
+def _profile_from_limit_polygon(element: apertures.LimitPolygon) -> Tuple[ShapeTypes, float, float]:
     xs = element.x_vertices + [element.x_vertices[0]]
     ys = element.y_vertices + [element.y_vertices[0]]
     polygon = Polygon(vertices=np.column_stack([xs, ys]))
     return polygon, 0, 0
 
 
-def profile_from_madx_aperture(shape: str, params: List[float]) -> Optional[ProfileTypes]:
+def profile_from_madx_aperture(shape: str, params: List[float]) -> Optional[ShapeTypes]:
     converter, allowed_len_params = {
         'circle': (_profile_from_madx_circle, 1),
         'rectangle': (_profile_from_madx_rectangle, 2),
