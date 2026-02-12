@@ -373,9 +373,12 @@ void compute_max_aperture_sigma(
         .halo_primary = BeamData_get_halo_primary(beam_data)
     };
 
-    int completed = 0;
-    for (int idx_slice = 0; idx_slice < num_slices; idx_slice++)
-    //VECTORIZE_OVER(idx_slice, num_slices)
+
+    #ifdef XO_CONTEXT_CPU
+        int completed = 0;
+    #endif
+
+    VECTORIZE_OVER(idx_slice, num_slices)
     {
         uint32_t cross_section_index = 0;
         float_type* const points = out_interpolated_apertures + idx_slice * num_points * 2;
@@ -422,10 +425,12 @@ void compute_max_aperture_sigma(
         );
         sigmas[idx_slice] = num_sigmas;
 
-        printf("Computing sigmas: %d%%\r", 100 * (++completed) / num_slices);
-        fflush(stdout);
+        #ifdef XO_CONTEXT_CPU
+            printf("Computing sigmas: %d%%\r", 100 * (++completed) / num_slices);
+            fflush(stdout);
+        #endif
     }
-    //END_VECTORIZE;
+    END_VECTORIZE;
 }
 
 #endif /* CGEOM_BEAM_APERTURE */
