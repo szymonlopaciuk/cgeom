@@ -29,6 +29,19 @@ def build_aperture_kernels(context):
                 xo.Arg(xo.Float32, pointer=True, name="sigmas"),
             ],
         ),
+        "compute_horizontal_vertical_diagonal_aperture_sigmas": xo.Kernel(
+            c_name="compute_horizontal_vertical_diagonal_aperture_sigmas",
+            args=[
+                xo.Arg(ApertureModel, name="model"),
+                xo.Arg(CrossSections, name="cross_sections"),
+                xo.Arg(TwissData, name="twiss_data"),
+                xo.Arg(BeamData, name="beam_data"),
+                xo.Arg(xo.Float32, pointer=True, name="out_interpolated_apertures"),
+                xo.Arg(xo.Float32, pointer=True, name="out_sigmas_h"),
+                xo.Arg(xo.Float32, pointer=True, name="out_sigmas_v"),
+                xo.Arg(xo.Float32, pointer=True, name="out_sigmas_d"),
+            ],
+        ),
         "build_polygon_for_profile": xo.Kernel(
             c_name="build_polygon_for_profile",
             args=[

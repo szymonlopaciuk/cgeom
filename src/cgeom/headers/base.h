@@ -1,5 +1,6 @@
 #ifndef CGEOM_BASE_H
 #define CGEOM_BASE_H
+
 #include <math.h>
 #include <stdlib.h>
 
@@ -26,7 +27,6 @@ typedef struct {
 
 
 
-float_type geom2d_norm(float_type x, float_type y);
 float_type geom2d_dot(G2DPoint a, G2DPoint b);
 float_type geom2d_cross(G2DPoint a, G2DPoint b);
 G2DPoint geom2d_sub(G2DPoint a, G2DPoint b);
@@ -36,12 +36,6 @@ void geom2d_points_translate(float_type dx, float_type dy, G2DPoint* points, con
 float_type geom2d_elliptic_E(float_type phi, float_type k);
 float_type geom2d_elliptic_E_complete(float_type k);
 
-
-float_type geom2d_norm(float_type x, float_type y)
-/* Get the norm of a 2D vector */
-{
-    return sqrt(x * x + y * y);
-}
 
 float_type geom2d_dot(G2DPoint a, G2DPoint b)
 {
@@ -68,7 +62,7 @@ float_type geom2d_points_distance(float_type x1, float_type y1, float_type x2, f
 {
     float_type dx = x2 - x1;
     float_type dy = y2 - y1;
-    return geom2d_norm(dx, dy);
+    return hypot(dx, dy);
 }
 
 void geom2d_points_translate(float_type dx, float_type dy, G2DPoint* points, const int len_points)

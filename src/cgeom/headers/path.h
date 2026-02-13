@@ -132,7 +132,7 @@ float_type geom2d_line_segment_get_length(const G2DSegment *seg)
     float_type y1 = seg->line_params.y0;
     float_type x2 = seg->line_params.x1;
     float_type y2 = seg->line_params.y1;
-    return geom2d_norm(x2 - x1, y2 - y1);
+    return hypot(x2 - x1, y2 - y1);
 }
 
 void geom2d_line_segment_get_points_at_steps(const G2DSegment *seg, const float_type *steps, int len_points, G2DPoint *out_points)
@@ -145,7 +145,7 @@ Contract: len_points=len(steps); len(out_points)=len_points
     float_type y1 = seg->line_params.y0;
     float_type x2 = seg->line_params.x1;
     float_type y2 = seg->line_params.y1;
-    float_type line_length = geom2d_norm(x2 - x1, y2 - y1);
+    float_type line_length = hypot(x2 - x1, y2 - y1);
     float_type ux = (x2 - x1) / line_length;
     float_type uy = (y2 - y1) / line_length;
 
@@ -179,7 +179,7 @@ void geom2d_arc_segment_from_ref_length_angle(float_type x0, float_type y0, floa
 
 */
 {
-    float_type norm = geom2d_norm(dx, dy);
+    float_type norm = hypot(dx, dy);
     if (angle == 0.0)
     {
         geom2d_line_segment_from_start_length(x0, y0, dx, dy, length, out);

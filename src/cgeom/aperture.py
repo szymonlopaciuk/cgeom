@@ -1,9 +1,11 @@
 import bisect
 import re
 from functools import lru_cache
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, Literal
 
 import numpy as np
+from numpy import complexfloating, dtype, float64, floating, ndarray
+
 import xobjects as xo
 from xobjects.context import XContext
 from xtrack import TwissInit, TwissTable
@@ -423,7 +425,7 @@ class Aperture:
             resolution: Optional[float] = None,
             twiss: Optional[TwissTable] = None,
             **kwargs,
-) -> Tuple[TwissTable, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, TwissTable, np.ndarray, Optional[np.ndarray]]:
         """Compute the maximum number of sigmas at which the beam fits in the aperture at element ``element_name``.
 
         Parameters
@@ -440,20 +442,8 @@ class Aperture:
         **kwargs
             Other parameters to be forwarded to ``Aperture.get_aperture_sigmas_at_s``.
         """
-        line = self.env[line_name]
-        element = line[element_name]
-        s_start = line.get_s_position(element_name)
-        element_length = getattr(element, 'length', 0)
-        s_end = s_start + element_length
-
-        if resolution is not None:
-            num_cuts = int(element_length / resolution)
-            s_positions = np.linspace(s_start, s_end, num_cuts)
-        else:
-            s_positions = [s_start, s_end]
-
+        s_positions = self._get_cuts_at_element(element_name, line_name, resolution)
         twiss_init = twiss.get_twiss_init(at_element=element_name) if twiss else None
-
         return self.get_aperture_sigmas_at_s(line_name, s_positions, twiss_init, **kwargs)
 
     def get_aperture_sigmas_at_s(
@@ -461,10 +451,10 @@ class Aperture:
             line_name: str,
             s_positions: Iterable[float],
             twiss_init: Optional[TwissInit] = None,
-            include_all_twiss_s=True,
+            method: Literal['bisection', 'rays'] = 'bisection',
             cross_sections_num_points: int = 36,
             envelopes_num_points: int = 36,
-    ) -> Tuple[np.ndarray, TwissTable, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, TwissTable, np.ndarray, Optional[np.ndarray]]:
         """Compute the maximum number of sigmas at which the beam fits in the aperture at element ``element_name``.
 
         Parameters
@@ -490,28 +480,63 @@ class Aperture:
 
         sliced_twiss = line_sliced.twiss(init=twiss_init).rows[s_start:s_end:'s']
 
-        if not include_all_twiss_s:
-            raise NotImplementedError("This is not implemented yet: s_positions coming from the twiss are included.")
-
         num_slices = len(sliced_twiss.s)
         twiss_data = self._build_twiss_data(line_name, sliced_twiss)
         beam_data = BeamData(**self.halo_params)
         interpolated_points = np.zeros(shape=(num_slices, self.cross_sections.num_points, 2), dtype=np.float32)
-        envelope_at_max_sigma = np.zeros(shape=(num_slices, envelopes_num_points, 2), dtype=np.float32)
-        sigmas = np.zeros(num_slices, dtype=np.float32)
 
-        self.call_kernel(
-            'compute_max_aperture_sigma',
-            model=self.model,
-            cross_sections=self.cross_sections,
-            twiss_data=twiss_data,
-            beam_data=beam_data,
-            out_interpolated_apertures=interpolated_points,
-            envelope_num_points=envelopes_num_points,
-            out_envelope_at_max_sigma=envelope_at_max_sigma,
-            sigmas=sigmas,
-        )
-        return sigmas, sliced_twiss, interpolated_points, envelope_at_max_sigma
+        if method == 'bisection':
+            envelope_at_max_sigma = np.zeros(shape=(num_slices, envelopes_num_points, 2), dtype=np.float32)
+            sigmas = np.zeros(num_slices, dtype=np.float32)
+
+            self.call_kernel(
+                'compute_max_aperture_sigma',
+                model=self.model,
+                cross_sections=self.cross_sections,
+                twiss_data=twiss_data,
+                beam_data=beam_data,
+                out_interpolated_apertures=interpolated_points,
+                envelope_num_points=envelopes_num_points,
+                out_envelope_at_max_sigma=envelope_at_max_sigma,
+                sigmas=sigmas,
+            )
+            return sigmas, sliced_twiss, interpolated_points, envelope_at_max_sigma
+        elif method == 'rays':
+            sigmas_h = np.zeros(num_slices, dtype=np.float32)
+            sigmas_v = np.zeros(num_slices, dtype=np.float32)
+            sigmas_d = np.zeros(num_slices, dtype=np.float32)
+
+            self.call_kernel(
+                'compute_horizontal_vertical_diagonal_aperture_sigmas',
+                model=self.model,
+                cross_sections=self.cross_sections,
+                twiss_data=twiss_data,
+                beam_data=beam_data,
+                out_interpolated_apertures=interpolated_points,
+                out_sigmas_h=sigmas_h,
+                out_sigmas_v=sigmas_v,
+                out_sigmas_d=sigmas_d,
+
+            )
+            return np.c_[sigmas_h, sigmas_v, sigmas_d], sliced_twiss, interpolated_points, None
+        else:
+            raise NotImplementedError(f"Method `{method}` for getting aperture sigmas is unknown.")
+
+    def _get_cuts_at_element(self, element_name: str, line_name: str, resolution: Optional[float]) -> List[float]:
+        """Get list of s positions so that the element ``element_name`` is cut with a ``resolution``."""
+        line = self.env[line_name]
+        element = line[element_name]
+        s_start = line.get_s_position(element_name)
+        element_length = getattr(element, 'length', 0)
+        s_end = s_start + element_length
+
+        if resolution is not None:
+            num_cuts = int(element_length / resolution)
+            s_positions = np.linspace(s_start, s_end, num_cuts)
+        else:
+            s_positions = [s_start, s_end]
+
+        return s_positions
 
     def _build_twiss_data(self, line_name: str, twiss_table: TwissTable) -> TwissData:
         twiss_data = TwissData(

@@ -389,6 +389,7 @@ def test_points_inside_polygon_simpler(kernels):
     assert not bool(big_in_small)
 
 
+@pytest.mark.parametrize('method', ['bisection', 'rays'])
 @pytest.mark.parametrize(
     'shape,aper_params,aper_tol,beam_params,halo_params,expected',
     [
@@ -516,7 +517,7 @@ def test_points_inside_polygon_simpler(kernels):
         'racetrack-dispersion-orbit-aper_tols-halo',
     ]
 )
-def test_get_aperture_sigmas_at_element_analytic(shape, aper_params, aper_tol, beam_params, halo_params, expected, context):
+def test_get_aperture_sigmas_at_element_analytic(method, shape, aper_params, aper_tol, beam_params, halo_params, expected, context):
     def madx_list(l):
         return '{' + ', '.join([str(v) for v in l]) + '}'
 
@@ -574,7 +575,11 @@ def test_get_aperture_sigmas_at_element_analytic(shape, aper_params, aper_tol, b
         twiss=tw,
         cross_sections_num_points=144,
         envelopes_num_points=144,
+        method=method,
     )
+
+    if method == 'rays':
+        computed_n1 = np.min(computed_n1, axis=1)
 
     # There are two sources of error wrt. to the analytic solution:
     # - precision of 0.01 on the bisection defined in beam_aperture.h

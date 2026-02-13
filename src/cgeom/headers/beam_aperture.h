@@ -7,6 +7,7 @@
 #include "xobjects/headers/common.h"
 #include "base.h"
 #include "path.h"
+#include "polygon_algs.h"
 
 
 typedef struct
@@ -48,57 +49,60 @@ typedef struct {
 } G2DBeamApertureData;
 
 
-void geom2d_get_beam_envelope(
-    const G2DBeamData *beam_data,
-    const G2DTwissData *twiss_data,
-    const G2DBeamApertureData *aperture_data,
-    const float_type num_sigmas,
-    int len_points,
-    G2DPoint *out_points
+static inline Racetrack_s geom2d_halo_racetrack(
+    const G2DTwissData *twiss,
+    const G2DBeamData *beam,
+    const G2DBeamApertureData *aperture
 )
-/* Create beam envelope based on beam data, twiss data, aperture data is needed to get tolerances on the shape
-
-See pyoptics/aperture.py: get_halo
-
-Contract: len(out_points)=len_points
-*/
 {
-    float_type x0 = twiss_data->x;  // assuming closed orbit relative to aperture center
-    float_type y0 = twiss_data->y;  // assuming closed orbit relative to aperture center
-    float_type betx = twiss_data->betx;
-    float_type bety = twiss_data->bety;
-    float_type dx = twiss_data->dx;
-    float_type dy = twiss_data->dy;
-    float_type gamma = twiss_data->gamma;
+    const float_type tol_dx =
+        beam->tol_beta_beating *
+        beam->tol_disp *
+        beam->tol_disp_ref_dx *
+        sqrt(twiss->betx / beam->tol_disp_ref_beta) *
+        beam->delta_rms;
 
-    float_type emitx_norm = beam_data->emitx_norm;
-    float_type emity_norm = beam_data->emity_norm;
-    float_type delta_rms = beam_data->delta_rms;
-    float_type tol_beta_beating = beam_data->tol_beta_beating;
-    float_type tol_disp_ref_beta = beam_data->tol_disp_ref_beta;
-    float_type tol_disp = beam_data->tol_disp;
-    float_type tol_disp_ref_dx = beam_data->tol_disp_ref_dx;
-    float_type tol_co = beam_data->tol_co;
+    const float_type tol_dy =
+        beam->tol_beta_beating *
+        beam->tol_disp *
+        beam->tol_disp_ref_dx *
+        sqrt(twiss->bety / beam->tol_disp_ref_beta) *
+        beam->delta_rms;
 
-    float_type tol_r = aperture_data->tol_r;
-    float_type tol_x = aperture_data->tol_x;
-    float_type tol_y = aperture_data->tol_y;
+    const float_type tol_x = aperture->tol_x;
+    const float_type tol_y = aperture->tol_y;
+    const float_type tol_r = aperture->tol_r;
+    const float_type tol_rx = tol_r + beam->tol_co + tol_dx;
+    const float_type tol_ry = tol_r + beam->tol_co + tol_dy;
 
-    float_type hr = num_sigmas * beam_data->halo_r / beam_data->halo_primary;
-    float_type hx = num_sigmas * beam_data->halo_x / beam_data->halo_primary;
-    float_type hy = num_sigmas * beam_data->halo_y / beam_data->halo_primary;
+    Racetrack_s rt = {
+        .h = tol_x + tol_rx,
+        .v = tol_y + tol_ry,
+        .a = tol_rx,
+        .b = tol_ry,
+    };
+    return rt;
+}
 
-    float_type ex = emitx_norm / gamma;
-    float_type ey = emity_norm / gamma;
 
-    float_type sigma_x = sqrt(ex * betx + dx * dx * delta_rms * delta_rms) * tol_beta_beating;
-    float_type sigma_y = sqrt(ey * bety + dy * dy * delta_rms * delta_rms) * tol_beta_beating;
+static inline Racetrack_s geom2d_beam_racetrack(
+    const G2DTwissData *twiss,
+    const G2DBeamData *beam
+)
+{
+    const float_type hx = beam->halo_x / beam->halo_primary;
+    const float_type hy = beam->halo_y / beam->halo_primary;
+    const float_type hr = beam->halo_r / beam->halo_primary;
 
-    float_type tol_dx = tol_beta_beating * tol_disp * tol_disp_ref_dx * sqrt(betx / tol_disp_ref_beta) * delta_rms;
-    float_type tol_dy = tol_beta_beating * tol_disp * tol_disp_ref_dx * sqrt(bety / tol_disp_ref_beta) * delta_rms;
+    const float_type ex = beam->emitx_norm / twiss->gamma;
+    const float_type ey = beam->emity_norm / twiss->gamma;
 
-    float_type tol_rx = tol_r + tol_co + tol_dx;
-    float_type tol_ry = tol_r + tol_co + tol_dy;
+    const float_type delta_sq = beam->delta_rms * beam->delta_rms;
+    const float_type dx_sq = twiss->dx * twiss->dx;
+    const float_type dy_sq = twiss->dy * twiss->dy;
+
+    const float_type sigma_x = sqrt(ex * twiss->betx + dx_sq * delta_sq) * beam->tol_beta_beating;
+    const float_type sigma_y = sqrt(ey * twiss->bety + dy_sq * delta_sq) * beam->tol_beta_beating;
 
     /*
         We describe the beam of the shape described by hx, hy, and hr as a
@@ -112,26 +116,56 @@ Contract: len(out_points)=len_points
 
         Solving these for sh, sv, and sr yields the following equations:
     */
-    float_type tmp = sqrt(2) * sqrt((hr - hx) * (hr - hy));
-    float_type sh = hr - hy + tmp;
-    float_type sv = hr - hx + tmp;
-    float_type sr = hx + hy - hr - tmp;
+    const float_type tmp = sqrt(2 * (hr - hx) * (hr - hy));
+    const float_type sh  = hr - hy + tmp;
+    const float_type sv  = hr - hx + tmp;
+    const float_type sr  = hx + hy - hr - tmp;
+
+    Racetrack_s rt = {
+        .h = (sh + sr) * sigma_x,
+        .v = (sv + sr) * sigma_y,
+        .a = sr * sigma_x,
+        .b = sr * sigma_y,
+    };
+    return rt;
+}
+
+
+void geom2d_get_beam_envelope(
+    const G2DBeamData *beam_data,
+    const G2DTwissData *twiss_data,
+    const G2DBeamApertureData *aperture_data,
+    const float_type num_sigmas,
+    int len_points,
+    G2DPoint *out_points
+)
+{
+    const float_type x0 = twiss_data->x;  /* assuming closed orbit relative to aperture center */
+    const float_type y0 = twiss_data->y;  /* assuming closed orbit relative to aperture center */
+
+    /* Beam racetrack is defined in 1-sigma units; scale by num_sigmas here */
+    const Racetrack_s beam_rt_1s = geom2d_beam_racetrack(twiss_data, beam_data);
+    const Racetrack_s halo_rt = geom2d_halo_racetrack(twiss_data, beam_data, aperture_data);
 
     /*
         Remembering that hx, hy, and hr are specified in sigmas, we convolve the
         beam racetrack with the aperture tolerance racetrack, to get our beam
         envelope racetrack:
     */
-    float_type h = tol_x + sh * sigma_x;
-    float_type v = tol_y + sv * sigma_y;
-    float_type a = tol_rx + sr * sigma_x;
-    float_type b = tol_ry + sr * sigma_y;
+    const Racetrack_s env = (Racetrack_s){
+        .h = halo_rt.h + num_sigmas * beam_rt_1s.h,
+        .v = halo_rt.v + num_sigmas * beam_rt_1s.v,
+        .a = halo_rt.a + num_sigmas * beam_rt_1s.a,
+        .b = halo_rt.b + num_sigmas * beam_rt_1s.b,
+    };
 
     G2DSegment segments[8];
-    G2DPath path;
-    path.segments = segments;
-    path.len_segments = 8;
-    geom2d_segments_from_racetrack(h + a, v + b, a, b, path.segments, &path.len_segments);
+    G2DPath path = (G2DPath){
+        .segments = segments,
+        .len_segments = 8,
+    };
+
+    geom2d_segments_from_racetrack(env.h, env.v, env.a, env.b, path.segments, &path.len_segments);
     geom2d_poly_get_n_uniform_points(&path, len_points, out_points);
     geom2d_points_translate(x0, y0, out_points, len_points);
 }
@@ -424,6 +458,120 @@ void compute_max_aperture_sigma(
             (G2DPoint*)(out_envelope_at_max_sigma + idx_slice * envelope_num_points * 2)
         );
         sigmas[idx_slice] = num_sigmas;
+
+        #ifdef XO_CONTEXT_CPU
+            printf("Computing sigmas: %d%%\r", 100 * (++completed) / num_slices);
+            fflush(stdout);
+        #endif
+    }
+    END_VECTORIZE;
+}
+
+
+void compute_horizontal_vertical_diagonal_aperture_sigmas(
+    ApertureModel model,
+    CrossSections cross_sections,
+    TwissData twiss_data,
+    BeamData beam_data,
+    float_type* const out_interpolated_apertures,
+    float_type* const out_num_sigmas_h,
+    float_type* const out_num_sigmas_v,
+    float_type* const out_num_sigmas_d
+) {
+    static const float_type angles[] = {M_PI / 4, M_PI / 2, 3 * M_PI / 4, M_PI, 5 * M_PI / 4, 3 * M_PI / 2, 7 * M_PI / 4};
+    const uint32_t num_slices = TwissData_len_x(twiss_data);
+    const uint32_t num_points = CrossSections_get_num_points(cross_sections);
+
+    G2DBeamData s_beam_data = {
+        .emitx_norm = BeamData_get_emitx_norm(beam_data),
+        .emity_norm = BeamData_get_emity_norm(beam_data),
+        .delta_rms = BeamData_get_delta_rms(beam_data),
+        .tol_co = BeamData_get_tol_co(beam_data),
+        .tol_disp = BeamData_get_tol_disp(beam_data),
+        .tol_disp_ref_dx = BeamData_get_tol_disp_ref_dx(beam_data),
+        .tol_disp_ref_beta = BeamData_get_tol_disp_ref_beta(beam_data),
+        .tol_energy = BeamData_get_tol_energy(beam_data),
+        .tol_beta_beating = BeamData_get_tol_beta_beating(beam_data),
+        .halo_x = BeamData_get_halo_x(beam_data),
+        .halo_y = BeamData_get_halo_y(beam_data),
+        .halo_r = BeamData_get_halo_r(beam_data),
+        .halo_primary = BeamData_get_halo_primary(beam_data)
+    };
+
+
+    #ifdef XO_CONTEXT_CPU
+        int completed = 0;
+    #endif
+
+    VECTORIZE_OVER(idx_slice, num_slices)
+    {
+        uint32_t cross_section_index = 0;
+        float_type* const points = out_interpolated_apertures + idx_slice * num_points * 2;
+        float_type s = TwissData_get_s(twiss_data, idx_slice);
+
+        const G2DTwissData s_twiss_data = {
+            .x = TwissData_get_x(twiss_data, idx_slice),
+            .y = TwissData_get_y(twiss_data, idx_slice),
+            .betx = TwissData_get_betx(twiss_data, idx_slice),
+            .bety = TwissData_get_bety(twiss_data, idx_slice),
+            .dx = TwissData_get_dx(twiss_data, idx_slice),
+            .dy = TwissData_get_dy(twiss_data, idx_slice),
+            .delta = TwissData_get_delta(twiss_data, idx_slice),
+            .gamma = TwissData_get_gamma(twiss_data)
+        };
+
+        cross_section_index = find_cross_section_for_s(cross_sections, s, points, cross_section_index);
+
+        const uint32_t type_pos_idx = CrossSections_get_type_position_indices(cross_sections, cross_section_index);
+        const uint32_t profile_pos_idx = CrossSections_get_profile_position_indices(cross_sections, cross_section_index);
+        const uint32_t profile_idx = ApertureModel_get_types_positions_profile_index(model, type_pos_idx, profile_pos_idx);
+        const Profile profile = ApertureModel_getp1_profiles(model, profile_idx);
+        const float_type tol_r = Profile_get_tol_r(profile);
+        const float_type tol_x = Profile_get_tol_x(profile);
+        const float_type tol_y = Profile_get_tol_y(profile);
+
+        const G2DBeamApertureData s_aperture_data = {
+            .points = (G2DPoint* const)points,
+            .n_points = num_points,
+            .tol_r = tol_r,
+            .tol_x = tol_x,
+            .tol_y = tol_y
+        };
+
+        Racetrack_s halo_rt = geom2d_halo_racetrack(&s_twiss_data, &s_beam_data, &s_aperture_data);
+        Racetrack_s beam_rt = geom2d_beam_racetrack(&s_twiss_data, &s_beam_data);
+        Racetrack_s envelope_one_sigma_rt = {
+            .h = beam_rt.h + halo_rt.h,
+            .v = beam_rt.v + halo_rt.v,
+            .a = beam_rt.a + halo_rt.a,
+            .b = beam_rt.b + halo_rt.b
+        };
+
+        float_type aperture_distances[8];
+        geom2d_dist_to_poly_along_rays(
+            angles,
+            /* num_thetas */ 8,
+            s_twiss_data.x,
+            s_twiss_data.y,
+            s_aperture_data.points,
+            num_points,
+            /* convex */ 1,
+            aperture_distances
+        );
+
+        float_type num_sigmas[8];
+        for (int i = 0; i < 8; i++) {
+            const float_type angle = angles[i];
+            const float_type d_halo = geom2d_racetrack_radius_at_angle(angle, halo_rt);
+            const float_type d_envelope_one_sigma = geom2d_racetrack_radius_at_angle(angle, envelope_one_sigma_rt);
+            const float_type d_aperture = aperture_distances[i];
+            const float_type n1 = (d_aperture - d_halo) / (d_envelope_one_sigma - d_halo);
+            num_sigmas[i] = n1;
+        }
+
+        out_num_sigmas_h[idx_slice] = fmin(num_sigmas[0], num_sigmas[4]);
+        out_num_sigmas_v[idx_slice] = fmin(num_sigmas[2], num_sigmas[6]);
+        out_num_sigmas_d[idx_slice] = fmin(fmin(num_sigmas[1], num_sigmas[3]), fmin(num_sigmas[5], num_sigmas[7]));
 
         #ifdef XO_CONTEXT_CPU
             printf("Computing sigmas: %d%%\r", 100 * (++completed) / num_slices);
