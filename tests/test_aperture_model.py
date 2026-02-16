@@ -585,6 +585,78 @@ def test_get_aperture_sigmas_at_element_analytic(method, shape, aper_params, ape
     xo.assert_allclose(computed_n1, expected, atol=0.01, rtol=0.002)
 
 
+def test_get_aperture_sigmas_at_element_analytic_rays(context):
+    betx = 9
+    bety = 16
+    delta = 0.001
+    gamma = 10
+
+    beam_data = {
+        'emitx_norm': 4e-3,
+        'emity_norm': 4e-3,
+        'delta_rms': 0.001,
+        'tol_co': 0.002,
+        'tol_disp': 1.25,
+        'tol_disp_ref_dx': 20,
+        'tol_disp_ref_beta': 4,
+        'tol_energy': 0.001,
+        'tol_beta_beating': 0.8,
+        'halo_x': 0.5,
+        'halo_y': 0.6,
+        'halo_r': 0.7,
+        'halo_primary': 10,
+    }
+
+    tol_r = 0.002
+    tol_x = 0.006
+    tol_y = 0.002
+
+    expected_n1 = 100
+
+    lattice = f"""
+        m1: marker,
+            apertype = racetrack,
+            aperture = {{ 0.28, 0.43, 0.13, 0.172 }},
+            aper_tol = {{ {tol_r}, {tol_x}, {tol_y} }};
+
+        seq: sequence, l = 1;
+            m1, at = 0;
+        endsequence;
+    """
+
+    env = xt.load(string=lattice, format="madx", install_limits=False)
+    seq = env["seq"]
+    seq.set_particle_ref("proton", gamma0=gamma)
+
+    tw = seq.twiss4d(betx=betx, bety=bety, delta=delta)
+
+    aperture_model = Aperture.from_line_with_associated_apertures(
+        seq, line_name="seq", context=context
+    )
+    aperture_model.halo_params.update(beam_data)
+
+    # Needed as these quantities are not imported by the native madloader
+    aperture_model.model.profiles[0].tol_r = tol_r
+    aperture_model.model.profiles[0].tol_x = tol_x
+    aperture_model.model.profiles[0].tol_y = tol_y
+
+    computed_n1, tw, apertures_points, envelope_points = (
+        aperture_model.get_aperture_sigmas_at_element(
+            line_name="seq",
+            element_name="m1",
+            resolution=None,
+            twiss=tw,
+            cross_sections_num_points=144,
+            envelopes_num_points=144,
+            method="rays",
+        )
+    )
+
+    # All n1-s should be the expected value, the envelope at the expected value
+    # should fully cover the aperture in this case.
+    xo.assert_allclose(computed_n1, expected_n1, atol=0.01, rtol=0.002)
+
+
 @pytest.mark.parametrize(
     'shape,aper_params,aper_tol,exn,eyn,gamma,betx,bety,x,y,halo_params',
     [
