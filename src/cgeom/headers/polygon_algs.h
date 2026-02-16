@@ -23,6 +23,30 @@ typedef struct {
 } RayHit_s;
 
 
+static inline Racetrack_s geom2d_add_racetracks(Racetrack_s rt1, Racetrack_s rt2)
+/* Minkowski sum of two racetracks */
+{
+    return (Racetrack_s){
+        .h = rt1.h + rt2.h,
+        .v = rt1.v + rt2.v,
+        .a = rt1.a + rt2.a,
+        .b = rt1.b + rt2.b,
+    };
+}
+
+
+static inline Racetrack_s geom2d_scale_racetrack(Racetrack_s rt, float_type scale)
+/* Scale a racetrack by a factor ``scale``. */
+{
+    return (Racetrack_s){
+        .h = rt.h * scale,
+        .v = rt.v * scale,
+        .a = rt.a * scale,
+        .b = rt.b * scale,
+    };
+}
+
+
 float_type geom2d_racetrack_radius_at_angle(float_type theta, Racetrack_s rt)
 /* Compute the length of a line segment going from the center of a racetrack to its boundary at angle ``theta``. */
 {

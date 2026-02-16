@@ -4,7 +4,6 @@ from functools import lru_cache
 from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, Literal
 
 import numpy as np
-from numpy import complexfloating, dtype, float64, floating, ndarray
 
 import xobjects as xo
 from xobjects.context import XContext
@@ -358,7 +357,7 @@ class Aperture:
             profile_indices: Dict[str, int],
             profile_list: List[ShapeTypes],
             context: XContext,
-    ) -> Aperture:
+    ) -> 'Aperture':
         """Build the Aperture class and its comprising xobjects.
 
         Parameters

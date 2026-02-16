@@ -342,8 +342,6 @@ def test_points_inside_polygon_simple(kernels):
         len_poly_points=poly_big.shape[0],
     )
 
-    import matplotlib.pyplot as plt
-
     assert bool(small_in_big)
 
     big_in_small = kernels["_points_inside_polygon"](

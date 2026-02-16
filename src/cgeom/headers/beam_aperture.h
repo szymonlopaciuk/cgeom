@@ -468,6 +468,73 @@ void compute_max_aperture_sigma(
 }
 
 
+static inline float_type _envelope_at_n_error(
+    float_type n,
+    float_type angle,
+    float_type d_target,
+    Racetrack_s halo,
+    Racetrack_s beam
+)
+/* Returns racetrack_radius_at_angle(angle, halo + n*beam) - d_target */
+{
+    Racetrack_s beam_at_n = geom2d_scale_racetrack(beam, n);
+    Racetrack_s rt = geom2d_add_racetracks(halo, beam_at_n);
+    return geom2d_racetrack_radius_at_angle(angle, rt) - d_target;
+}
+
+
+static inline float_type compute_n1_for_point(
+    float_type angle,
+    float_type d_target,
+    Racetrack_s halo,
+    Racetrack_s beam,
+    float_type n0,
+    float_type n1
+)
+/* Find ``n`` such that the envelope ``halo + n * beam`` has a radius at angle
+   ``angle`` equal to ``d_target``.
+
+    Parameters:
+    -----------
+    angle, d_target:
+        ray for which we are computing n1
+    halo:
+        racetrack describing the halo
+    beam:
+        racetrack describing the beam in 1-sigma units
+    n0, n1:
+        initial guesses
+
+    Returns:
+    --------
+    Computed ``n1``.
+ */
+{
+    static const int n_iter = 2;
+    static const float_type eps = 1e-8f;
+
+    float_type f0 = _envelope_at_n_error(n0, angle, d_target, halo, beam);
+    float_type f1 = _envelope_at_n_error(n1, angle, d_target, halo, beam);
+
+    for (int i = 0; i < n_iter; i++)
+    {
+        float_type denominator = (f1 - f0);
+        if (fabs(denominator) < eps) break;
+
+        // Newton step
+        float_type n2 = n1 - f1 * (n1 - n0) / denominator;
+
+        n0 = n1;
+        f0 = f1;
+
+        n1 = n2;
+        f1 = _envelope_at_n_error(n1, angle, d_target, halo, beam);
+    }
+
+    return n1;
+}
+
+
 void compute_horizontal_vertical_diagonal_aperture_sigmas(
     ApertureModel model,
     CrossSections cross_sections,
@@ -540,12 +607,7 @@ void compute_horizontal_vertical_diagonal_aperture_sigmas(
 
         Racetrack_s halo_rt = geom2d_halo_racetrack(&s_twiss_data, &s_beam_data, &s_aperture_data);
         Racetrack_s beam_rt = geom2d_beam_racetrack(&s_twiss_data, &s_beam_data);
-        Racetrack_s envelope_one_sigma_rt = {
-            .h = beam_rt.h + halo_rt.h,
-            .v = beam_rt.v + halo_rt.v,
-            .a = beam_rt.a + halo_rt.a,
-            .b = beam_rt.b + halo_rt.b
-        };
+        Racetrack_s envelope_one_sigma_rt = geom2d_add_racetracks(halo_rt, beam_rt);
 
         float_type aperture_distances[8];
         geom2d_dist_to_poly_along_rays(
@@ -565,7 +627,8 @@ void compute_horizontal_vertical_diagonal_aperture_sigmas(
             const float_type d_halo = geom2d_racetrack_radius_at_angle(angle, halo_rt);
             const float_type d_envelope_one_sigma = geom2d_racetrack_radius_at_angle(angle, envelope_one_sigma_rt);
             const float_type d_aperture = aperture_distances[i];
-            const float_type n1 = (d_aperture - d_halo) / (d_envelope_one_sigma - d_halo);
+            const float_type n1_lin_approx = (d_aperture - d_halo) / (d_envelope_one_sigma - d_halo);
+            float_type n1 = compute_n1_for_point(angle, d_aperture, halo_rt, beam_rt, 0.f, n1_lin_approx);
             num_sigmas[i] = n1;
         }
 
