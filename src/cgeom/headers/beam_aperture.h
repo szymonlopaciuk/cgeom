@@ -377,7 +377,6 @@ uint32_t find_cross_section_for_s(
 }
 
 
-
 void compute_max_aperture_sigma(
     ApertureModel model,
     CrossSections cross_sections,
