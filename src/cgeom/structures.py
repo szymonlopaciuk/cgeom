@@ -80,9 +80,9 @@ class ProfilePosition(xo.Struct):
     s_position: float
         The position along the type axis where this profile sits.
     shift_x: float
-        The horizontal shift of the profile center from the type axis.
+        The horizontal shift of the profile centre from the type axis.
     shift_y: float
-        The vertical shift of the profile center from the type axis
+        The vertical shift of the profile centre from the type axis
     rot_x: float
         The rotation of the profile around the type axis in radians.
     rot_y: float
@@ -165,6 +165,18 @@ class ApertureModel(xo.Struct):
 
     def profile_name_for_index(self, idx: int) -> str:
         return self.profile_names[idx]
+
+    def type_for_position(self, type_position: TypePosition) -> ApertureType:
+        return self.types[type_position.type_index]
+
+    def type_name_for_position(self, type_position: TypePosition) -> str:
+        return self.type_name_for_index(type_position.type_index)
+
+    def profile_for_position(self, profile_position: ProfilePosition) -> Profile:
+        return self.profiles[profile_position.profile_index]
+
+    def profile_name_for_position(self, profile_position: ProfilePosition) -> str:
+        return self.profile_name_for_index(profile_position.profile_index)
 
 
 class CrossSections(xo.Struct):

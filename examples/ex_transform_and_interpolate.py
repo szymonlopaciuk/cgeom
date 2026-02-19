@@ -1,7 +1,7 @@
 import xtrack as xt
 import numpy as np
 import matplotlib.pyplot as plt
-from cgeom.aperture import Aperture
+from cgeom.aperture import Aperture, transform_matrix
 from cgeom.structures import ApertureModel, ApertureType, Circle, Profile, ProfilePosition, Rectangle, TypePosition
 
 
@@ -25,16 +25,8 @@ line = env.new_line(
 
 sv = line.survey()
 
-ax = plt.figure().add_subplot(projection='3d')
-ax.plot(sv.Z, sv.X, sv.Y, c='b')
-ax.set_xlabel('Z [m]')
-ax.set_ylabel('X [m]')
-ax.set_zlabel('Y [m]')
-ax.set_aspect('equal', 'datalim')
-plt.show()
-
-circle = Circle(radius=1)
-rectangle = Rectangle(half_width=1, half_height=1.5)
+circle = Circle(radius=2)
+rectangle = Rectangle(half_width=2, half_height=0.5)
 
 profiles = [
     Profile(shape=circle, tol_r=0, tol_x=0, tol_y=0),
@@ -43,25 +35,23 @@ profiles = [
 
 profile_positions = [
     ProfilePosition(profile_index=0, s_position=s)
-    for s in np.linspace(0, 11, 12)
+    for s in [0, 11]
 ]
 
 types = [
-    ApertureType(curvature=0, positions=[0, 1]),
+    ApertureType(curvature=0., positions=profile_positions),
 ]
 
 type_positions = [
     TypePosition(
         type_index=0,
         survey_reference_name='drift::0',
-        survey_index=0,
-        transformation=np.identity(4),
+        survey_index=sv.name.tolist().index('drift::0'),
+        transformation=transform_matrix(dx=-1.5),
     ),
 ]
 
-model = ApertureType(type_positions=type_positions, types=types, profiles=profiles)
-
-aper = ApertureModel(
+model = ApertureModel(
     line_name='line',
     type_positions=type_positions,
     types=types,
@@ -69,3 +59,72 @@ aper = ApertureModel(
     type_names=['type0'],
     profile_names=['circle', 'rectangle'],
 )
+
+ax = plt.figure().add_subplot(projection='3d')
+ax.plot(sv.Z, sv.X, sv.Y, c='b')
+ax.set_xlabel('Z [m]')
+ax.set_ylabel('X [m]')
+ax.set_zlabel('Y [m]')
+
+ax.auto_scale_xyz([0, 12], [-6, 6], [-6, 6])
+
+aper = Aperture(env, model, cross_sections=None)
+
+
+def matrix_from_survey_point(sv_row):
+    matrix = np.identity(4)
+    matrix[:3, 0] = sv_row.ex
+    matrix[:3, 1] = sv_row.ey
+    matrix[:3, 2] = sv_row.ez
+    matrix[:3, 3] = np.hstack([sv_row.X, sv_row.Y, sv_row.Z])
+    return matrix
+
+
+def poly2d_to_hom(poly2d):
+    num_points = poly2d.shape[0]
+    poly_hom = np.column_stack((poly2d, np.zeros(num_points), np.ones(num_points))).T
+    return poly_hom
+
+
+for type_pos in aper.model.type_positions:
+    aper_type = aper.model.type_for_position(type_pos)
+    sv_ref = sv.rows[type_pos.survey_index]
+
+    sv_ref_matrix = matrix_from_survey_point(sv_ref)
+    type_matrix = type_pos.transformation.to_nparray()
+
+    for profile_pos in aper_type.positions:
+        profile = aper.model.profile_for_position(profile_pos)
+
+        num_points = 100
+        poly = aper.polygon_for_profile(profile, num_points)
+        poly_hom = poly2d_to_hom(poly)
+
+        profile_position_matrix = transform_matrix(
+            dx=profile_pos.shift_x,
+            dy=profile_pos.shift_y,
+            ds=profile_pos.s_position,
+            theta=profile_pos.rot_y,
+            phi=profile_pos.rot_x,
+            psi=profile_pos.rot_z,
+        )
+
+        poly_in_sv_frame = sv_ref_matrix @ type_matrix @ profile_position_matrix @ poly_hom
+
+        xs, ys, zs = poly_in_sv_frame[:3]
+        ax.plot(zs, xs, ys, c='r')
+
+s_for_cuts = np.linspace(1, 11, 20)
+profiles, sv_profiles = aper.profiles_at_s('line', s_for_cuts)
+
+for idx, s in enumerate(s_for_cuts):
+    profile = profiles[idx]
+    sv_idx = np.searchsorted(sv_profiles.s, s)
+    sv_point_matrix = matrix_from_survey_point(sv_profiles.rows[sv_idx])
+    profile_hom = poly2d_to_hom(profile)
+    profile_in_sv_frame = sv_point_matrix @ profile_hom
+
+    xs, ys, zs = profile_in_sv_frame[:3]
+    ax.plot(zs, xs, ys, c='g')
+
+plt.show()

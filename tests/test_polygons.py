@@ -18,17 +18,8 @@ def context():
 def build_polygon_for_profile(context):
     def _build_polygon_for_profile(profile: ShapeTypes, num_points: int):
         profile = Profile(shape=profile)
-        cross_sections = CrossSections(
-            count=1,
-            num_points=num_points,
-            points=(1, num_points, 2),
-            # The rest are not relevant for this function
-            s_positions=1,
-            type_position_indices=1,
-            profile_position_indices=1,
-        )
-        context.kernels.build_polygon_for_profile(cross_sections=cross_sections, cross_section_idx=0, profile=profile)
-        points = cross_sections.points.to_nparray().reshape((num_points, 2))
+        points = np.zeros((num_points, 2), dtype=np.float32)
+        context.kernels.build_polygon_for_profile(points=points, num_points=num_points, profile=profile)
         return points
 
     return _build_polygon_for_profile

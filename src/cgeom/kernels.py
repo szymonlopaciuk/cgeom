@@ -45,8 +45,8 @@ def build_aperture_kernels(context):
         "build_polygon_for_profile": xo.Kernel(
             c_name="build_polygon_for_profile",
             args=[
-                xo.Arg(CrossSections, name="cross_sections"),
-                xo.Arg(xo.UInt64, name="cross_section_idx"),
+                xo.Arg(xo.Float32, pointer=True, name="points"),
+                xo.Arg(xo.UInt32, name="num_points"),
                 xo.Arg(Profile, name="profile"),
             ],
         ),

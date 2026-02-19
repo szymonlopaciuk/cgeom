@@ -1,11 +1,12 @@
 import bisect
 import re
 from functools import lru_cache
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, Literal
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, Literal, Container
 
 import numpy as np
 
 import xobjects as xo
+from xtrack.survey import SurveyTable
 from xobjects.context import XContext
 from xtrack import TwissInit, TwissTable
 from xtrack.environment import Environment
@@ -18,8 +19,10 @@ from cgeom.structures import (ApertureModel, ApertureType, BeamData, CrossSectio
                               Profile, ProfilePosition, ShapeTypes,
                               TypePosition, TwissData)
 
+PolygonPoints32 = np.ndarray[Tuple[int, Literal[2]], np.dtype[np.float32]]
 
-def transform_matrix(dx, dy, ds, theta, phi, psi):
+
+def transform_matrix(dx=0, dy=0, ds=0, theta=0, phi=0, psi=0):
     """Generate a 3D transformation matrix.
 
     Parameters
@@ -346,6 +349,11 @@ class Aperture:
         )
         return aperture
 
+    def polygon_for_profile(self, profile: Profile, num_points: int) -> PolygonPoints32:
+        points = np.ndarray(shape=(num_points, 2), dtype=np.float32)
+        self.call_kernel('build_polygon_for_profile', points=points, num_points=num_points, profile=profile)
+        return points
+
     @classmethod
     def _build_aperture_model(
             cls,
@@ -404,18 +412,6 @@ class Aperture:
         )
 
         return aperture
-
-    def type_for_position(self, type_position: TypePosition) -> ApertureType:
-        return self.model.types[type_position.type_index]
-
-    def type_name_for_position(self, type_position: TypePosition) -> str:
-        return self.model.type_name_for_index(type_position.type_index)
-
-    def profile_for_position(self, profile_position: ProfilePosition) -> Profile:
-        return self.model.profiles[profile_position.profile_index]
-
-    def profile_name_for_position(self, profile_position: ProfilePosition) -> str:
-        return self.model.profile_name_for_index(profile_position.profile_index)
 
     def get_aperture_sigmas_at_element(
             self,
@@ -521,6 +517,32 @@ class Aperture:
         else:
             raise NotImplementedError(f"Method `{method}` for getting aperture sigmas is unknown.")
 
+    def tangents_at_s(self, line_name: str, s_positions: List[float]) -> np.ndarray[Tuple[Literal[4], Literal[4]], np.dtype[np.float32]]:
+        """Return a local coordinate system (each represented by a homogeneous matrix) at all ``s_positions``."""
+        tangents = np.zeros(shape=(len(s_positions), 4, 4), dtype=np.float32)
+        line = self.env[line_name].copy()
+        line.cut_at_s(s_positions)
+        survey_sliced = line.survey()
+        sv_indices = np.searchsorted(survey_sliced.s, s_positions)
+
+        for idx, sv_idx in enumerate(sv_indices):
+            row = survey_sliced.rows[sv_idx]
+            tangents[idx, :3, 0] = row.ex
+            tangents[idx, :3, 1] = row.ey
+            tangents[idx, :3, 2] = row.ez
+            tangents[idx, :, 3] = np.hstack([row.X, row.Y, row.Z, 1])
+
+        return tangents
+
+    def profiles_at_s(self, line_name: str, s_positions: Iterable[float]) -> Tuple[PolygonPoints32, SurveyTable]:
+        # tangents = self.tangents_at_s(line_name, s_positions)
+        line_sliced = self.env[line_name].copy()
+        line_sliced.cut_at_s(s_positions)
+        survey_sliced = line_sliced.survey()
+        shape = np.array([[np.cos(t), np.sin(t)] for t in np.linspace(0, 2 * np.pi, 50)])
+        placeholders = np.tile(shape, (len(list(s_positions)), 1, 1))
+        return placeholders, survey_sliced
+
     def _get_cuts_at_element(self, element_name: str, line_name: str, resolution: Optional[float]) -> List[float]:
         """Get list of s positions so that the element ``element_name`` is cut with a ``resolution``."""
         line = self.env[line_name]
@@ -553,7 +575,7 @@ class Aperture:
 
     def _build_cross_sections(self, line_name: str, num_points: int) -> CrossSections:
         survey = self.env[line_name].survey()
-        num_cross_sections = sum(len(self.type_for_position(type_pos).positions) for type_pos in self.model.type_positions)
+        num_cross_sections = sum(len(self.model.type_for_position(type_pos).positions) for type_pos in self.model.type_positions)
 
         # Pre-allocate the cross-sections with the correct sizes
         cross_sections = CrossSections(
@@ -568,10 +590,10 @@ class Aperture:
         cross_section_idx_iter = iter(progress(range(num_cross_sections), desc='Building cross-sections', total=num_cross_sections))
 
         for type_pos_idx, type_pos in enumerate(cast(Iterable[TypePosition], self.model.type_positions)):
-            aper_type = self.type_for_position(type_pos)
+            aper_type = self.model.type_for_position(type_pos)
 
             for profile_pos_idx, profile_pos in enumerate(cast(Iterable[ProfilePosition], aper_type.positions)):
-                profile = self.profile_for_position(profile_pos)
+                profile = self.model.profile_for_position(profile_pos)
 
                 # TODO: We need to correctly handle transformations here, and if needed generate two cross-sections!
                 #  (When generating two cross sections, remember to adapt the calculation of num_cross_sections above.)
@@ -626,11 +648,11 @@ class Aperture:
         type_ranges = []
 
         for type_pos in type_positions:
-            aperture_type = self.type_for_position(type_pos)
+            aperture_type = self.model.type_for_position(type_pos)
             positions = list(aperture_type.positions)
 
             if not positions:
-                print(f"Warning: aperture type {self.type_name_for_position(type_pos)} has no profile positions.")
+                print(f"Warning: aperture type {self.model.type_name_for_position(type_pos)} has no profile positions.")
                 continue
 
             s_positions = [float(p.s_position) for p in positions]
