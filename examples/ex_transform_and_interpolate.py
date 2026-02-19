@@ -114,17 +114,39 @@ for type_pos in aper.model.type_positions:
         xs, ys, zs = poly_in_sv_frame[:3]
         ax.plot(zs, xs, ys, c='r')
 
+
+def tangents_at_s(line, s_positions):
+    """Return a local coordinate system (each represented by a homogeneous matrix) at all ``s_positions``."""
+    tangents = np.zeros(shape=(len(s_positions), 4, 4), dtype=np.float32)
+    line_sliced = line.copy()
+    line_sliced.cut_at_s(s_positions)
+    survey_sliced = line_sliced.survey()
+    sv_indices = np.searchsorted(survey_sliced.s, s_positions)
+
+    for idx, sv_idx in enumerate(sv_indices):
+        row = survey_sliced.rows[sv_idx]
+        tangents[idx, :3, 0] = row.ex
+        tangents[idx, :3, 1] = row.ey
+        tangents[idx, :3, 2] = row.ez
+        tangents[idx, :, 3] = np.hstack([row.X, row.Y, row.Z, 1])
+
+    return tangents
+
+
 s_for_cuts = np.linspace(1, 11, 20)
-profiles, sv_profiles = aper.profiles_at_s('line', s_for_cuts)
+profiles, tangents = aper.profiles_at_s('line', s_for_cuts)
+tangents2 = tangents_at_s(line, s_for_cuts)
 
 for idx, s in enumerate(s_for_cuts):
     profile = profiles[idx]
-    sv_idx = np.searchsorted(sv_profiles.s, s)
-    sv_point_matrix = matrix_from_survey_point(sv_profiles.rows[sv_idx])
     profile_hom = poly2d_to_hom(profile)
-    profile_in_sv_frame = sv_point_matrix @ profile_hom
+    profile_in_sv_frame = tangents[idx] @ profile_hom
+    profile_in_sv_frame2 = tangents2[idx] @ profile_hom
 
     xs, ys, zs = profile_in_sv_frame[:3]
     ax.plot(zs, xs, ys, c='g')
+
+    # xs2, ys2, zs2 = profile_in_sv_frame2[:3]
+    # ax.plot(zs2, xs2, ys2, c='y', linestyle='--')
 
 plt.show()

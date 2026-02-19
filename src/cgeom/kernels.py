@@ -1,11 +1,14 @@
 import xobjects as xo
-from cgeom.structures import ApertureModel, BeamData, CrossSections, Profile, TwissData
+from cgeom.structures import (
+    ApertureModel, BeamData, CrossSections, Profile, SurveyData, TwissData,
+)
 
 
 def build_aperture_kernels(context):
     source = '''
         #include "cgeom/headers/polygons.h"
         #include "cgeom/headers/beam_aperture.h"
+        #include "cgeom/headers/survey_tools.h"
     '''
 
     kernels = {
@@ -68,6 +71,14 @@ def build_aperture_kernels(context):
                 xo.Arg(xo.UInt32, name="len_points"),
             ],
             ret=xo.Arg(xo.Int8),
+        ),
+        "resample_survey_table": xo.Kernel(
+            c_name="resample_survey_table",
+            args=[
+                xo.Arg(SurveyData, name="survey"),
+                xo.Arg(xo.Float32, pointer=True, name="s"),
+                xo.Arg(SurveyData, name="sliced"),
+            ]
         ),
     }
 

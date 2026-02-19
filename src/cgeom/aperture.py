@@ -1,12 +1,12 @@
 import bisect
 import re
+from collections.abc import Collection
 from functools import lru_cache
-from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, Literal, Container
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast, Literal
 
 import numpy as np
 
 import xobjects as xo
-from xtrack.survey import SurveyTable
 from xobjects.context import XContext
 from xtrack import TwissInit, TwissTable
 from xtrack.environment import Environment
@@ -15,11 +15,14 @@ from xtrack.progress_indicator import progress
 from cgeom.kernels import build_aperture_kernels
 from cgeom.profile_converters import (LimitTypes, profile_from_limit_element,
                                       profile_from_madx_aperture)
-from cgeom.structures import (ApertureModel, ApertureType, BeamData, CrossSections,
-                              Profile, ProfilePosition, ShapeTypes,
-                              TypePosition, TwissData)
+from cgeom.structures import (
+    ApertureModel, ApertureType, BeamData, CrossSections,
+    Profile, ProfilePosition, ShapeTypes,
+    TypePosition, TwissData, SurveyData,
+)
 
 PolygonPoints32 = np.ndarray[Tuple[int, Literal[2]], np.dtype[np.float32]]
+HomogenousMatrices32 = np.ndarray[Tuple[int, Literal[4], Literal[4]], np.dtype[np.float32]]
 
 
 def transform_matrix(dx=0, dy=0, ds=0, theta=0, phi=0, psi=0):
@@ -476,7 +479,7 @@ class Aperture:
         sliced_twiss = line_sliced.twiss(init=twiss_init).rows[s_start:s_end:'s']
 
         num_slices = len(sliced_twiss.s)
-        twiss_data = self._build_twiss_data(line_name, sliced_twiss)
+        twiss_data = TwissData.from_twiss_table(line.particle_ref, sliced_twiss)
         beam_data = BeamData(**self.halo_params)
         interpolated_points = np.zeros(shape=(num_slices, self.cross_sections.num_points, 2), dtype=np.float32)
 
@@ -517,7 +520,7 @@ class Aperture:
         else:
             raise NotImplementedError(f"Method `{method}` for getting aperture sigmas is unknown.")
 
-    def tangents_at_s(self, line_name: str, s_positions: List[float]) -> np.ndarray[Tuple[Literal[4], Literal[4]], np.dtype[np.float32]]:
+    def tangents_at_s(self, line_name: str, s_positions: Collection[float]) -> HomogenousMatrices32:
         """Return a local coordinate system (each represented by a homogeneous matrix) at all ``s_positions``."""
         tangents = np.zeros(shape=(len(s_positions), 4, 4), dtype=np.float32)
         line = self.env[line_name].copy()
@@ -534,14 +537,20 @@ class Aperture:
 
         return tangents
 
-    def profiles_at_s(self, line_name: str, s_positions: Iterable[float]) -> Tuple[PolygonPoints32, SurveyTable]:
-        # tangents = self.tangents_at_s(line_name, s_positions)
-        line_sliced = self.env[line_name].copy()
-        line_sliced.cut_at_s(s_positions)
-        survey_sliced = line_sliced.survey()
-        shape = np.array([[np.cos(t), np.sin(t)] for t in np.linspace(0, 2 * np.pi, 50)])
-        placeholders = np.tile(shape, (len(list(s_positions)), 1, 1))
-        return placeholders, survey_sliced
+    def profiles_at_s(self, line_name: str, s_positions: Collection[float]) -> Tuple[PolygonPoints32, HomogenousMatrices32]:
+        s_positions = np.array(s_positions, dtype=np.float32)
+        shape = np.array([(np.cos(t), np.sin(t)) for t in np.linspace(0, 2 * np.pi, 50)], dtype=np.float32)
+        placeholders = cast(PolygonPoints32, np.tile(shape, (len(s_positions), 1, 1)))
+
+        sv_data = SurveyData.from_survey_table(self.env[line_name].survey())
+        sv_sliced = SurveyData.zeros(len(s_positions))
+        self.call_kernel(
+            'resample_survey_table',
+            survey=sv_data,
+            s=np.array(s_positions, dtype=np.float32),
+            sliced=sv_sliced,
+        )
+        return placeholders, sv_sliced.tangent.to_nparray()
 
     def _get_cuts_at_element(self, element_name: str, line_name: str, resolution: Optional[float]) -> List[float]:
         """Get list of s positions so that the element ``element_name`` is cut with a ``resolution``."""
@@ -558,20 +567,6 @@ class Aperture:
             s_positions = [s_start, s_end]
 
         return s_positions
-
-    def _build_twiss_data(self, line_name: str, twiss_table: TwissTable) -> TwissData:
-        twiss_data = TwissData(
-            s=twiss_table.s,  # s position
-            x=twiss_table.x,  # closed orbit x
-            y=twiss_table.y,  # closed orbit y
-            betx=twiss_table.betx,  # beta x
-            bety=twiss_table.bety,  # beta y
-            dx=twiss_table.dx,  # dispersion x
-            dy=twiss_table.dy,  # dispersion y
-            delta=twiss_table.delta,  # relative energy deviation
-            gamma=self.env[line_name].particle_ref.gamma0,  # relativistic gamma
-        )
-        return twiss_data
 
     def _build_cross_sections(self, line_name: str, num_points: int) -> CrossSections:
         survey = self.env[line_name].survey()

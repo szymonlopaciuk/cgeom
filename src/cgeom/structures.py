@@ -1,6 +1,11 @@
 from typing import List, Union, get_args
 
+import numpy as np
+
 import xobjects as xo
+from xtrack.twiss import TwissTable
+from xtrack.survey import SurveyTable
+from xtrack.particles import Particles
 
 
 class Circle(xo.Struct):
@@ -199,6 +204,21 @@ class TwissData(xo.Struct):
     delta = xo.Float32[:] # relative energy deviation
     gamma = xo.Float32    # relativistic gamma
 
+    @classmethod
+    def from_twiss_table(cls, particle_ref: Particles, twiss_table: TwissTable) -> 'TwissData':
+        twiss_data = cls(
+            s=twiss_table.s,  # s position
+            x=twiss_table.x,  # closed orbit x
+            y=twiss_table.y,  # closed orbit y
+            betx=twiss_table.betx,  # beta x
+            bety=twiss_table.bety,  # beta y
+            dx=twiss_table.dx,  # dispersion x
+            dy=twiss_table.dy,  # dispersion y
+            delta=twiss_table.delta,  # relative energy deviation
+            gamma=particle_ref.gamma0,  # relativistic gamma
+        )
+        return twiss_data
+
 
 class BeamData(xo.Struct):
     emitx_norm = xo.Float64        # normalized emittance x
@@ -214,3 +234,43 @@ class BeamData(xo.Struct):
     halo_y = xo.Float64            # n sigma of vertical halo
     halo_r = xo.Float64            # n sigma of 45 degree halo
     halo_primary = xo.Float64      # n sigma of primary halo
+
+
+class SurveyData(xo.Struct):
+    s = xo.Float32[:]
+    tangent = xo.Float32[:, 4, 4]
+    angle = xo.Float32[:]
+    length = xo.Float32[:]
+    tilt = xo.Float32[:]
+
+    @classmethod
+    def zeros(cls, length):
+        return cls(
+            s=np.zeros(shape=(length,), dtype=np.float32),
+            tangent=np.zeros(shape=(length, 4, 4), dtype=np.float32),
+            angle=np.zeros(shape=(length,), dtype=np.float32),
+            length=np.zeros(shape=(length,), dtype=np.float32),
+            tilt=np.zeros(shape=(length,), dtype=np.float32),
+        )
+
+    @classmethod
+    def from_survey_table(cls, survey_table: SurveyTable) -> 'SurveyData':
+        s = np.zeros(shape=(len(survey_table),), dtype=np.float32)
+        tangents = np.zeros(shape=(len(survey_table), 4, 4), dtype=np.float32)
+        angles = np.zeros_like(s)
+        lengths = np.zeros_like(s)
+        tilts = np.zeros_like(s)
+
+        for idx, row in enumerate(survey_table.rows):
+            row = survey_table.rows[idx]
+            s[idx] = row.s
+            tangents[idx, :3, 0] = row.ex
+            tangents[idx, :3, 1] = row.ey
+            tangents[idx, :3, 2] = row.ez
+            tangents[idx, :, 3] = np.hstack([row.X, row.Y, row.Z, 1])
+            angles[idx] = row.angle
+            lengths[idx] = row.length
+            tilts[idx] = row.rot_s_rad
+
+        survey_data = cls(s=s, tangent=tangents, angle=angles, length=lengths, tilt=tilts)
+        return survey_data

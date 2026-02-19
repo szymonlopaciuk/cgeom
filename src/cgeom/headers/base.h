@@ -42,10 +42,12 @@ float_type geom2d_dot(G2DPoint a, G2DPoint b)
     return a.x*b.x + a.y*b.y;
 }
 
+
 float_type geom2d_cross(G2DPoint a, G2DPoint b)
 {
     return a.x*b.y - a.y*b.x;
 }
+
 
 G2DPoint geom2d_sub(G2DPoint a, G2DPoint b)
 {
@@ -53,9 +55,11 @@ G2DPoint geom2d_sub(G2DPoint a, G2DPoint b)
     return r;
 }
 
+
 float_type geom2d_clamp(float_type t, float_type lo, float_type hi) {
     return (t < lo) ? lo : (t > hi) ? hi : t;
 }
+
 
 float_type geom2d_points_distance(float_type x1, float_type y1, float_type x2, float_type y2)
 /* Get the distance between two 2D points */
@@ -64,6 +68,7 @@ float_type geom2d_points_distance(float_type x1, float_type y1, float_type x2, f
     float_type dy = y2 - y1;
     return hypot(dx, dy);
 }
+
 
 void geom2d_points_translate(float_type dx, float_type dy, G2DPoint* points, const int len_points)
 /* Translate the `points` by (dx, dy)
@@ -76,6 +81,7 @@ Contract: len_points=len(points)
         points[i].y += dy;
     }
 }
+
 
 static float_type geom2d_elliptic_E_adaptive(float_type a, float_type b, float_type eps, int depth, float_type m)
 /* Incomplete elliptic integral of the second kind E(phi, k)
@@ -101,6 +107,7 @@ static float_type geom2d_elliptic_E_adaptive(float_type a, float_type b, float_t
            geom2d_elliptic_E_adaptive(c, b, eps / 2.0, depth - 1, m);
 }
 
+
 static float_type geom2d_elliptic_E_numeric(float_type phi, float_type k)
 {
     float_type m = k * k;
@@ -118,6 +125,7 @@ static float_type geom2d_elliptic_E_numeric(float_type phi, float_type k)
     return sign * total;
 }
 
+
 float_type geom2d_elliptic_E(float_type phi, float_type k)
 {
     if (k < 0.0 || k >= 1.0)
@@ -125,12 +133,14 @@ float_type geom2d_elliptic_E(float_type phi, float_type k)
     return geom2d_elliptic_E_numeric(phi, k);
 }
 
+
 float_type geom2d_elliptic_E_complete(float_type k)
 {
     if (k < 0.0 || k >= 1.0)
         return NAN;
     return geom2d_elliptic_E_numeric(0.5 * M_PI, k);
 }
+
 
 void merge_sorted(const float_type *restrict a, const float_type *restrict b, int len_a, int len_b, float_type *out, int *out_len)
 /* Return array with not repeated ascending values from a and b that are assumed to be sorted
@@ -175,6 +185,23 @@ Contract: len_a=len(a); len_b=len(b); len(out)=len_a+len_b; postlen(out)=out_len
         }
     }
     *out_len = k;
+}
+
+
+float_type sinc(float_type x) {
+    if (fabs(x) < 1e-8f) return 1.0f;
+    return sin(x) / x;
+}
+
+
+void matrix_multiply_4x4(const float_type a[4][4], const float_type b[4][4], float_type result[4][4]) {
+    // Multiply two 4x4 matrices `a` and `b`, and store the result in `result`.
+    for (int i = 0; i < 4; i++) {
+        result[i][0] = a[i][0] * b[0][0] + a[i][1] * b[1][0] + a[i][2] * b[2][0] + a[i][3] * b[3][0];
+        result[i][1] = a[i][0] * b[0][1] + a[i][1] * b[1][1] + a[i][2] * b[2][1] + a[i][3] * b[3][1];
+        result[i][2] = a[i][0] * b[0][2] + a[i][1] * b[1][2] + a[i][2] * b[2][2] + a[i][3] * b[3][2];
+        result[i][3] = a[i][0] * b[0][3] + a[i][1] * b[1][3] + a[i][2] * b[2][3] + a[i][3] * b[3][3];
+    }
 }
 
 #endif /* CGEOM_BASE_H */
